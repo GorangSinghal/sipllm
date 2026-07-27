@@ -203,6 +203,7 @@ void LayerLoader::plan_and_pin_layers() {
                               ? (size_t)opt_.n_buffers * per_layer : 0;
     for (size_t l = 0; l < target; ++l) {
         fill_slot(pinned_[l], (int)l);
+        pinned_[l].layer = (int)l;
         size_t sb = 0;
         for (int r = 0; r < (int)Role::COUNT; ++r) sb += pinned_[l].buf[r].size();
         if (globals + pinned_bytes_ + sb + ring_reserve > budget) {  // ceiling guard
@@ -280,7 +281,9 @@ void LayerLoader::fill_slot(Slot& s, int layer) {
              by0 = stats_.bytes_read.load();
     for (int r = 0; r < (int)Role::COUNT; ++r)
         load_weight_into(s, (Role)r, layer);
-    s.layer = layer;
+    // NB: s.layer is assigned by the CALLER — under mutex_ in worker_loop/loadLayer,
+    // or single-threaded in the sync path / plan_and_pin — never here. Writing it
+    // in this unlocked helper raced loadLayer's cv_ready_ predicate (TSan).
     if (layer >= 0 && layer < (int)layer_stats_.size()) {
         layer_stats_[layer].io_us = stats_.io_us.load() - io0;
         layer_stats_[layer].dequant_us = stats_.dequant_us.load() - dq0;
@@ -334,7 +337,7 @@ bool LayerLoader::loadLayer(int layer) {
     if (!opt_.async || opt_.n_buffers == 1) {
         // Synchronous single-buffer path: strictly one block resident.
         Slot& s = slots_[0];
-        if (s.layer != layer) { fill_slot(s, layer); stats_.layers_loaded += 1; s.state = Slot::State::Ready; stats_.prefetch_misses += 1; }
+        if (s.layer != layer) { fill_slot(s, layer); s.layer = layer; stats_.layers_loaded += 1; s.state = Slot::State::Ready; stats_.prefetch_misses += 1; }
         else stats_.prefetch_hits += 1;
         current_ = 0;
         active_ = &slots_[0];
