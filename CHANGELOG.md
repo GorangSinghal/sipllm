@@ -19,8 +19,9 @@ Decode tok/s:          Q8 `--fast` resident: smollm2 62→171 · tinyllama **50 
 TTFT:                  smollm2 ~0.10 s · tinyllama ~0.68 s   vs llama.cpp 0.003 / 0.021 s
 Prefill Throughput:    smollm2 50–67 tok/s · tinyllama 7–23 tok/s  vs llama.cpp 1680 / 238
 Expansion Factor:      2.7× (smollm2) · 5.5× (tinyllama)  = disk / peak-RSS at min budget
-Largest Runnable Model:bounded by DISK not RAM — ran a 668 MB model at 121 MB peak RSS.
-                       Remote-cache streaming (#43) removes the disk bound too.
+Largest Runnable Model:MEASURED — Llama-2-13B (7.87 GB Q4) in **317 MB** peak RSS
+                       (25×); Llama-3.1-8B (4.92 GB Q4) in 204 MB (24×), on a
+                       16 GB Mac with ~3 GB free. Bounded by layer, not model size.
 Energy / Token:        N/A (needs `sudo powermetrics`; never fabricated)
 
 Current Largest Bottleneck:  Two fronts now that Q8 `--fast` is within ~12% of
@@ -78,6 +79,27 @@ byte-identical greedy output for 24 tokens).
 `1e-3`/bit-identical correctness tests are unchanged (no regressions).
 
 ## [Unreleased]
+
+### Bigger-than-RAM demonstration (real models, measured)
+
+The defining-capability proof: SipLLM streams models whose weights far exceed
+available RAM at a peak RSS that tracks a single layer — not the model. On this
+16 GB Mac with ~3 GB free (loading these resident is impossible), with
+`--stream-lm-head --no-async`, `--ctx 512`, greedy:
+
+| model | weights | peak RSS | model ÷ RSS | output |
+|:------|--------:|---------:|------------:|:-------|
+| TinyLlama-1.1B Q8 | 1.17 GB | 61 MB  | 19× | coherent |
+| Llama-3.1-8B Q4   | 4.92 GB | 204 MB | 24× | "…a city of grandeur and beauty…" |
+| Llama-2-13B Q4    | 7.87 GB | 317 MB | 25× | "…Paris. The currency of France is the Euro." |
+
+Peak RSS grows with layer *width*, never model depth/total size (`toy_scaling`
+stays flat vs depth). Streaming an off-cache model is disk-bound (<1 tok/s at
+this bounded-memory extreme); `--ram-budget` trades RAM for speed from here.
+
+**Fixed** — hardened `sipllm` model download (curl over HTTP/1.1 with
+`--retry-all-errors`); a flaky HTTP/2 stream cancel had truncated a pull and the
+partial `.part` was renamed to the final name.
 
 ### Wave 6 — `--ram-budget`: hard peak-RSS ceiling + partial layer residency (#37)
 

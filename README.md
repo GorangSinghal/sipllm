@@ -73,6 +73,36 @@ M=~/.sipllm/models/tinyllama-q8_0.gguf
 > kernel (opt-in; numerically equivalent). Extending int-dot to **K-quants
 > (Q4_K)** — for an even larger RAM win on 4-bit models — is the next step.
 
+## Bigger than RAM — the defining capability
+
+Streaming exists for one reason: **peak memory tracks a single layer, not the
+whole model** — so weights that dwarf available RAM still run. Measured on this
+16 GB Mac with only ~3 GB free (where loading these models resident is
+impossible), SipLLM streams them one layer at a time
+(`--stream-lm-head --no-async`, `--ctx 512`, greedy), producing coherent output
+at a bounded peak RSS (from `/usr/bin/time -l`):
+
+| model | weights on disk | peak RSS | model ÷ RSS |
+|:------|----------------:|---------:|------------:|
+| TinyLlama-1.1B  (Q8_0)   | 1.17 GB | **61 MB**  | 19× |
+| Llama-3.1-8B    (Q4_K_M) | 4.92 GB | **204 MB** | 24× |
+| Llama-2-13B     (Q4_K_M) | 7.87 GB | **317 MB** | 25× |
+
+A **13B model runs in 317 MB — 25× smaller than its own weights**, on a machine
+that cannot hold it resident. Peak RSS grows with *layer* size (model width),
+never with model depth/total size — a deeper model of the same width has flat
+peak RSS (`toy_scaling` in `bench/results/`). Streaming an off-cache model is
+disk-bound, so this bounded-memory extreme trades speed (well under 1 tok/s here)
+for footprint; raise `--ram-budget` to pin hot layers and climb the RAM↔speed
+dial.
+
+```bash
+sipllm pull llama3.1:8b:q4_k_m
+M=~/.sipllm/models/llama3.1-8b-q4_k_m.gguf
+./build/llm "$M" -p "The capital of France is" -n 20 --greedy --ctx 512 --stream-lm-head --no-async
+# → coherent output at ~204 MB peak RSS for a 4.9 GB model
+```
+
 ## Why "sip"?
 
 The usual way to run an LLM loads the entire model into memory. A 1.1 B model in
