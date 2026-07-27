@@ -72,6 +72,9 @@ public:
         // RAM<->speed dial, issue #37). Runtime derives this from a total
         // peak-RSS target by subtracting the KV cache + a scratch reserve.
         size_t    ram_budget_bytes = 0;
+        // Opt-in int8 SDOT kernel for Q8_0 projections (--fast). Numerically
+        // equivalent (activation is quantized), not bit-identical; off by default.
+        bool      fast_quant   = false;
     };
 
     struct Stats {

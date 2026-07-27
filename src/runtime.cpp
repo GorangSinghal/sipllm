@@ -3,6 +3,7 @@
 #include "llm/format.h"
 #include "llm/gguf.h"
 #include "llm/common.h"
+#include "llm/neon.h"
 
 #include <algorithm>
 
@@ -31,6 +32,7 @@ Runtime::Runtime(std::unique_ptr<WeightSource> src, LayerLoader::Options opt,
                  int max_ctx, int threads, size_t ram_budget_total)
     : src_(std::move(src)), opt_(opt) {
     cfg_ = ModelConfig::from_source(*src_);
+    set_fast_quant(opt_.fast_quant);   // #demo: opt-in int8 SDOT for Q8_0 (--fast)
     LLM_CHECK(cfg_.n_layers > 0 && cfg_.dim > 0, "runtime: invalid model config");
 
     // Cap the DEFAULT context window. Modern models advertise huge windows

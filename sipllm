@@ -15,7 +15,7 @@ set -euo pipefail
 SIPLLM_HOME="${SIPLLM_HOME:-$HOME/.sipllm}"
 MODELS_DIR="$SIPLLM_HOME/models"
 REGISTRY_FILE="$SIPLLM_HOME/registry.conf"
-VERSION="0.1.1"
+VERSION="0.4.0"
 
 mkdir -p "$MODELS_DIR"
 

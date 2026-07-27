@@ -45,11 +45,17 @@ ARCHFLAGS ?= $(CXXFLAGS_ARCH)
 # gates build with HARDEN= (empty) so they can still DETECT uninitialized reads.
 HARDEN ?= -ftrivial-auto-var-init=zero
 
-CXXFLAGS := $(CXXSTD) $(WARN) $(OPT) $(ARCHFLAGS) $(HARDEN) $(INCLUDE)
+CXXFLAGS := $(CXXSTD) $(WARN) $(OPT) $(ARCHFLAGS) $(HARDEN) $(INCLUDE) -MMD -MP
 
 BUILD := build
 SRC   := $(wildcard src/*.cpp)
 OBJ   := $(patsubst src/%.cpp,$(BUILD)/%.o,$(SRC))
+
+# Header dependency tracking: -MMD emits a .d per object listing the headers it
+# pulled in; -include feeds them back so editing a header rebuilds exactly the
+# objects that use it. Without this, header edits silently left stale objects
+# (mismatched struct layouts across TUs) — a real correctness hazard.
+-include $(wildcard $(BUILD)/*.d)
 
 # ---- optional Vulkan backend ---------------------------------------------
 # `make VULKAN=1` links libvulkan and compiles the backend (device enumeration

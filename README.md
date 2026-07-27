@@ -39,6 +39,40 @@ sipllm run tinyllama -p "The capital of France is"
 
 ---
 
+## Demo — half the RAM, comparable speed
+
+Same model, same prompt, CPU-only, Apple M3 (4 threads). SipLLM's opt-in
+`--fast` int8 kernel brings decode close to llama.cpp, while `--ram-budget`
+holds peak memory far below it — SipLLM streams and pins weights under a hard
+ceiling instead of loading the whole model resident.
+
+**TinyLlama-1.1B, Q8_0, `--ctx 512`, greedy, warm cache.** Peak RSS from
+`/usr/bin/time -l` (authoritative, cross-runtime); decode is the median of 3:
+
+| runtime | peak RSS | decode | vs llama.cpp |
+|:--------|---------:|-------:|:-------------|
+| llama.cpp (CPU, `-ngl 0 -t 4`)        | 2326 MB | ~57 tok/s | baseline |
+| **SipLLM** `--fast --ram-budget 1200M` (resident) | **1113 MB** | ~50 tok/s | **2.1× less RAM**, ~12% slower |
+| **SipLLM** `--fast` (streaming)        | **175 MB**  | 6.8 tok/s | **13.3× less RAM** |
+
+At full residency SipLLM uses **2.1× less memory** at ~88% of llama.cpp's decode
+(within 20%); drop the budget and the *same model* runs in **175 MB — 13× less
+RAM**, streamed one layer at a time. It's a smooth RAM↔speed dial, not a fixed
+point. Output is numerically equivalent (int8-activation dot — the same technique
+llama.cpp uses; first-token predictions match, and the exact fp32 path stays the
+default oracle).
+
+```bash
+sipllm pull tinyllama:q8_0
+M=~/.sipllm/models/tinyllama-q8_0.gguf
+./build/llm "$M" -p "Once upon a time" -n 32 --greedy --ctx 512 --fast --ram-budget 1200M  # resident: 2x less RAM, ~88% speed
+./build/llm "$M" -p "Once upon a time" -n 32 --greedy --ctx 512 --fast                      # streaming: 13x less RAM
+```
+
+> **Status.** `--fast` accelerates **Q8_0** projections through an int8 SDOT
+> kernel (opt-in; numerically equivalent). Extending int-dot to **K-quants
+> (Q4_K)** — for an even larger RAM win on 4-bit models — is the next step.
+
 ## Why "sip"?
 
 The usual way to run an LLM loads the entire model into memory. A 1.1 B model in

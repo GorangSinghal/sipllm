@@ -6,7 +6,7 @@ Rule 1). Peak RSS is the authoritative cross-runtime number from `/usr/bin/time 
 
 ```
 ============================
-SipLLM North Star   (measured 2026-07-24 · Apple M3 · warm cache · median-of-3)
+SipLLM North Star   (measured 2026-07-27 · Apple M3 · warm cache · median-of-3)
 ============================
 Peak RSS:              tinyllama 121 MB (stream) … 644 MB (fully resident)
                        smollm2    54 MB (stream) … 161 MB (fully resident)
@@ -14,8 +14,8 @@ Peak RSS:              tinyllama 121 MB (stream) … 644 MB (fully resident)
 Resident Weights:      FLAT 1.5 MB across 4/16/32 toy layers (streaming thesis holds)
                        real: 37.6 MB (smollm2 1-layer) / 106.5 MB (tinyllama 1-layer)
                        pinned dial: up to 143 MB (smollm2) / 630 MB (tinyllama)
-Decode tok/s:          smollm2 53 → 66  ·  tinyllama 11.4 → 22.1  (RAM-budget dial)
-                       vs llama.cpp: 404 / 95  (kernel gap remains, see below)
+Decode tok/s:          Q8 `--fast` resident: smollm2 62→171 · tinyllama **50 vs llama.cpp 57**
+                       RAM-budget dial (exact fp32): smollm2 53→66 · tinyllama 11→22
 TTFT:                  smollm2 ~0.10 s · tinyllama ~0.68 s   vs llama.cpp 0.003 / 0.021 s
 Prefill Throughput:    smollm2 50–67 tok/s · tinyllama 7–23 tok/s  vs llama.cpp 1680 / 238
 Expansion Factor:      2.7× (smollm2) · 5.5× (tinyllama)  = disk / peak-RSS at min budget
@@ -23,21 +23,59 @@ Largest Runnable Model:bounded by DISK not RAM — ran a 668 MB model at 121 MB 
                        Remote-cache streaming (#43) removes the disk bound too.
 Energy / Token:        N/A (needs `sudo powermetrics`; never fabricated)
 
-Current Largest Bottleneck:  Quantized matmul KERNEL throughput. With #37 the
-                       streaming tax is now a user choice; at full residency decode
-                       is compute-bound — tinyllama 22 tok/s vs llama.cpp 95 (4.3×),
-                       and prefill/TTFT ~32× behind (per-position dequant).
-Estimated Gain if Fixed:  Batched-GEMM dequant amortization (#41) → prefill/TTFT
-                       ~3–5×; a shared decode GEMV lifts decode toward parity.
-Why this is the next priority:  #37 isolated streaming from compute, so the residual
-                       gap is unambiguously kernel efficiency — it compounds with
-                       every future feature (remote streaming, MoE, long context)
-                       and is the only thing keeping SipLLM off performance parity.
-                       (Long-context peak-RSS floor is dominated by the fp32 KV
-                       cache — Q8_0 KV (#39) is the moat-side runner-up.)
-Confidence:            High — bottleneck is measured, not assumed; re-validate at the
-                       start of the next wave before committing to #41.
+Current Largest Bottleneck:  Two fronts now that Q8 `--fast` is within ~12% of
+                       llama.cpp. (1) 4-bit (Q4_K) models: the int-dot path does
+                       not apply yet, so K-quant decode still uses fp32 dequant.
+                       (2) Streaming (exceeds-RAM) regime: decode is disk-bandwidth
+                       -bound (arithmetic intensity Θ(1)).
+Estimated Gain if Fixed:  K-quant int-dot → Q8-class speed on 4-bit models = the
+                       biggest RAM headline. Speculative streaming → amortizes
+                       weight movement in the exceeds-RAM regime.
+Why this is the next priority:  v0.4 proves the thesis (2.1× less RAM at ~88%
+                       speed on a real 1.1B model). The Q4 int-dot path is the
+                       strongest next demo; streaming speed is the long-term moat.
+Confidence:            High — v0.4 numbers measured vs llama.cpp on tinyllama Q8;
+                       re-validate at the start of the next wave.
 ```
+
+## [0.4.0] — Developer Preview (2026-07-27)
+
+### Wave 7 — Demo v1: `--fast` int8 SDOT kernel + near-parity Q8 decode
+
+Closes the decode gap that stood between SipLLM and a "wow" demo. `linear()`
+routed **every** quantized weight through fp32-dequant-then-dot — including Q8_0,
+for which a tested int8 SDOT kernel already existed but was dead code. `--fast`
+wires it in (opt-in; the exact fp32 path stays the default/oracle), and the
+kernel was rebuilt for ILP (vector float accumulator, one horizontal reduce per
+row) + hardware fp16 scale conversion.
+
+**Demo — TinyLlama-1.1B Q8_0, Apple M3, `--ctx 512`, t=4, warm** (peak RSS from
+`/usr/bin/time -l`):
+
+| runtime | peak RSS | decode |
+|:--------|---------:|-------:|
+| llama.cpp (CPU) | 2326 MB | ~57 tok/s |
+| **SipLLM** `--fast --ram-budget 1200M` (resident) | **1113 MB** | ~50 tok/s |
+| **SipLLM** `--fast` (streaming) | **175 MB** | 6.8 tok/s |
+
+**2.09× less RAM at ~88% of llama.cpp's decode** (12% slower — within 20%), or
+**13× less RAM** streaming. Numerically equivalent (int8-activation dot, same
+technique as llama.cpp; first-token predictions match; smollm2 `--fast` produced
+byte-identical greedy output for 24 tokens).
+
+**Added**
+- `--fast` CLI flag (`LayerLoader::Options::fast_quant`) → int8 SDOT for Q8_0
+  projections. Kernel: `matmul_q8_0_i8` rewritten (vector accumulate + hw fp16),
+  +11–13% over the first wiring (smollm2 62→171 tok/s vs the fp32 path).
+- Clean CLI summary block (peak RSS / pinned layers / decode / fast on-off).
+
+**Fixed**
+- Makefile now tracks header dependencies (`-MMD -MP` + `-include`). Editing a
+  header previously left stale objects with mismatched struct layouts across
+  TUs — a silent correctness hazard that produced spurious test failures.
+
+**Verified** — full suite green on a clean build; `--fast` is opt-in so all
+`1e-3`/bit-identical correctness tests are unchanged (no regressions).
 
 ## [Unreleased]
 

@@ -21,6 +21,10 @@ bool neon_dotprod_available() {
 #endif
 }
 
+static bool g_fast_quant = false;
+void set_fast_quant(bool on) { g_fast_quant = on; }
+bool fast_quant_enabled() { return g_fast_quant; }
+
 void fp16_to_fp32_bulk(const uint16_t* src, float* dst, int64_t n) {
 #if defined(__ARM_FEATURE_FP16_VECTOR_ARITHMETIC)
     int64_t i = 0;
@@ -55,15 +59,12 @@ void quantize_activation_q8(const float* x, int64_t n, int8_t* q, float* scale) 
     }
 }
 
-#if defined(__ARM_FEATURE_DOTPROD)
-inline int32_t sdot32(const int8_t* a, const int8_t* b) {
-    int8x16_t a0 = vld1q_s8(a),      b0 = vld1q_s8(b);
-    int8x16_t a1 = vld1q_s8(a + 16), b1 = vld1q_s8(b + 16);
-    int32x4_t acc = vdupq_n_s32(0);
-    acc = vdotq_s32(acc, a0, b0);
-    acc = vdotq_s32(acc, a1, b1);
-    return vaddvq_s32(acc);
-}
+// Hardware fp16 -> fp32 for a Q8_0 block scale (one fcvt vs the software IEEE
+// decode). Falls back to the software path where fp16 arithmetic is absent.
+#if defined(__ARM_FP16_FORMAT_IEEE)
+inline float f16_scale(const uint8_t* p) { __fp16 h; std::memcpy(&h, p, 2); return (float)h; }
+#else
+inline float f16_scale(const uint8_t* p) { uint16_t h; std::memcpy(&h, p, 2); return fp16_to_fp32(h); }
 #endif
 
 } // namespace
@@ -83,14 +84,19 @@ void matmul_q8_0_i8(float* y, const void* W, const float* x,
     auto body = [&](int, int64_t begin, int64_t end) {
         for (int64_t o = begin; o < end; ++o) {
             const uint8_t* row = base + o * row_bytes;
-            float acc = 0.f;
+            // Vector float accumulator hides FMA latency; each block's int dot
+            // stays in an int32x4 (no per-block horizontal reduce) and the
+            // weight scale uses the hardware fp16 converter.
+            float32x4_t accv = vdupq_n_f32(0.f);
             for (int64_t b = 0; b < nb; ++b) {
-                uint16_t dh; std::memcpy(&dh, row + b * 34, 2);
                 const int8_t* wq = reinterpret_cast<const int8_t*>(row + b * 34 + 2);
-                int32_t s = sdot32(wq, xq.data() + b * 32);
-                acc += fp16_to_fp32(dh) * xs[b] * (float)s;
+                const int8_t* aq = xq.data() + b * 32;
+                int32x4_t p = vdotq_s32(vdotq_s32(vdupq_n_s32(0),
+                                        vld1q_s8(wq),      vld1q_s8(aq)),
+                                        vld1q_s8(wq + 16), vld1q_s8(aq + 16));
+                accv = vfmaq_n_f32(accv, vcvtq_f32_s32(p), f16_scale(row + b * 34) * xs[b]);
             }
-            y[o] = acc;
+            y[o] = vaddvq_f32(accv);
         }
     };
     if (pool && pool->size() > 1 && n_out >= 32) pool->parallel_for(n_out, body);

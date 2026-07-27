@@ -41,7 +41,7 @@ int main(int argc, char** argv) {
             "          [--top-k K] [--top-p P] [--repeat-penalty R] [--repeat-last-n N]\n"
             "          [--residency fp32|quant] [--mmap] [--no-async] [--stream-lm-head]\n"
             "          [--buffers N] [--ctx N] [--threads N] [--seed S] [--greedy]\n"
-            "          [--ram-budget BYTES|N{K,M,G}]\n",
+            "          [--ram-budget BYTES|N{K,M,G}] [--fast]\n",
             argv[0]);
         return 2;
     }
@@ -72,6 +72,7 @@ int main(int argc, char** argv) {
         else if (a == "--stream-lm-head") opt.stream_lm_head = true;
         else if (a == "--buffers") buffers = std::stoi(next("2"));
         else if (a == "--ram-budget") ram_budget = parse_bytes(next("0"));
+        else if (a == "--fast") opt.fast_quant = true;
         else if (a == "--ctx") ctx = std::stoi(next("0"));
         else if (a == "--threads") threads = std::stoi(next("0"));
         else { fprintf(stderr, "unknown arg: %s\n", a.c_str()); return 2; }
@@ -102,23 +103,30 @@ int main(int argc, char** argv) {
                     }, &st);
         st.load_s = load_s;
 
+        size_t rss = current_rss_bytes();
+        char budget_note[64] = "";
+        if (ram_budget) snprintf(budget_note, sizeof(budget_note), "   (budget %.0f MB)", ram_budget / 1e6);
         fprintf(stderr,
-            "\n\n--- stats ---\n"
-            "load:            %.3f s\n"
+            "\n\xE2\x94\x80\xE2\x94\x80 sipllm \xE2\x94\x80\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80\n"
+            "peak rss:        %.0f MB\n"
+            "pinned layers:   %d / %d%s\n"
+            "fast kernel:     %s\n"
+            "decode:          %.2f tok/s\n"
+            "prefill:         %.2f tok/s\n"
+            "TTFT:            %.3f s\n"
             "prompt tokens:   %d\n"
             "generated:       %d\n"
-            "TTFT:            %.3f s\n"
-            "prefill:         %.2f tok/s\n"
-            "decode:          %.2f tok/s\n"
             "weights resident:%.1f MB\n"
-            "pinned layers:   %d\n"
             "kv cache:        %.1f MB\n"
             "streamed:        %.1f MB (from disk)\n"
             "prefetch:        %" PRIu64 " hits / %" PRIu64 " misses\n"
             "context:         %d / %d\n",
-            st.load_s, st.prompt_tokens, st.gen_tokens, st.ttft_s,
-            st.prefill_tok_s, st.decode_tok_s,
-            st.weights_resident_bytes / 1e6, st.pinned_layers, st.kv_bytes / 1e6,
+            rss / 1e6,
+            st.pinned_layers, (int)rt.config().n_layers, budget_note,
+            opt.fast_quant ? "on" : "off",
+            st.decode_tok_s, st.prefill_tok_s, st.ttft_s,
+            st.prompt_tokens, st.gen_tokens,
+            st.weights_resident_bytes / 1e6, st.kv_bytes / 1e6,
             st.bytes_read / 1e6, st.prefetch_hits, st.prefetch_misses,
             st.ctx_used, st.ctx_max);
         return 0;

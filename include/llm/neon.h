@@ -20,6 +20,13 @@ namespace llm {
 // True if built with SDOT (dot-product) support.
 bool neon_dotprod_available();
 
+// Fast-quant kernel toggle. When enabled, linear() routes Q8_0 projections
+// through the int8 SDOT path (matmul_q8_0_i8) instead of exact fp32 dequant.
+// Off by default so the fp32-dequant path stays the correctness oracle; the
+// SDOT path quantizes the activation (numerically equivalent, like llama.cpp).
+void set_fast_quant(bool on);
+bool fast_quant_enabled();
+
 // y = W @ x, W is Q8_0 [n_out, n_in]; activation quantized to int8 internally.
 // n_in must be a multiple of 32. Falls back to the fp32-dequant path when SDOT
 // is unavailable, so it is always safe to call.
