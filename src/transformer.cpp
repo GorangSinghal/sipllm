@@ -438,7 +438,6 @@ void Transformer::block_gpt2(int64_t layer, int64_t pos) {
     const int64_t dim = cfg_.dim;
     const int64_t hd = cfg_.head_dim;
     const int64_t n_heads = cfg_.n_heads;
-    const int64_t n_kv = cfg_.n_kv_heads;
     const int64_t kv_dim = cfg_.kv_dim();
     const int64_t q_dim = cfg_.q_dim();
     const int64_t group = cfg_.gqa_group();

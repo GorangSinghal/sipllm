@@ -9,6 +9,14 @@
 #
 # ARM64 tuned; falls back gracefully on other hosts. No external libraries.
 
+# Bare `make` MUST build the project. Without this, the default goal is the first
+# non-.PHONY target make encounters — which on a clean checkout is `shader` (a
+# no-op stub when glslc is absent), so `make` built nothing and users had to
+# discover `make all` (reported from Termux). An explicit .DEFAULT_GOAL is immune
+# to target ordering AND to the `-include $(BUILD)/*.d` fragments below (whose
+# rules would otherwise claim the default goal once a build dir exists).
+.DEFAULT_GOAL := all
+
 CXX      ?= clang++
 CXXSTD   := -std=c++17
 WARN     := -Wall -Wextra -Wno-unused-parameter
