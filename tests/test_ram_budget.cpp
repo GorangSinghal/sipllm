@@ -163,6 +163,47 @@ TEST(ram_budget_hard_ceiling) {
     CHECK_MSG(tiny.pinned == 0 && tiny.resident == F, "sub-floor degrades to streaming");
 }
 
+#include "llm/mem_plan.h"
+
+TEST(ram_budget_planner) {
+    ToyConfig tc; tc.n_layers = 8; tc.dim = 64; tc.n_heads = 8; tc.n_kv_heads = 4;
+    tc.ffn_dim = 128; tc.vocab_size = 48; tc.seed = 99; tc.ctx_len = 1024;
+    std::string path = scratch("toy_rb_planner.llmw");
+    write_toy_model(path, tc);
+    ModelFile f(path, false);
+    ModelConfig cfg = ModelConfig::from_source(f);
+
+    BudgetRequest req;
+    req.budget_bytes = kHuge;
+    req.ctx_req = 0;
+    req.n_buffers_req = 2;
+    req.async_req = true;
+    req.residency = Residency::Quantized;
+    req.stream_head_req = false;
+    
+    MemoryPlan p1 = plan_memory(f, cfg, req);
+    CHECK_MSG(p1.feasible, "huge budget is feasible");
+    CHECK_MSG(!p1.ctx_capped, "huge budget does not cap ctx");
+    CHECK_MSG(p1.ctx == 1024, "uses full ctx");
+    CHECK_MSG(!p1.stream_lm_head, "head is resident");
+    CHECK_MSG(p1.n_buffers == 1, "buffers set to 1 when all pinned");
+    CHECK_MSG(p1.n_pinned_est == 8, "pins all layers");
+
+    req.budget_bytes = 100; // impossible
+    MemoryPlan p2 = plan_memory(f, cfg, req);
+    CHECK_MSG(!p2.feasible, "tiny budget is impossible");
+    CHECK_MSG(p2.ctx == 128, "shrinks ctx to minimum in impossible plan");
+    CHECK_MSG(p2.stream_lm_head, "safe default streams head in impossible plan");
+    CHECK_MSG(p2.n_pinned_est == 0, "pins nothing in impossible plan");
+
+    req.budget_bytes = p2.ledger.total(); 
+    MemoryPlan p3 = plan_memory(f, cfg, req);
+    CHECK_MSG(p3.feasible, "exact minimum budget is feasible");
+    CHECK_MSG(p3.ctx_capped, "minimum budget caps ctx");
+    CHECK_MSG(!p3.stream_lm_head, "tied model head ignores stream flag");
+    CHECK_MSG(p3.n_pinned_est == 0, "minimum budget pins nothing");
+}
+
 int main() {
     printf("== test_ram_budget ==\n");
     return llmtest::run_all();

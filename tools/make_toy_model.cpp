@@ -24,6 +24,7 @@ int main(int argc, char** argv) {
     ToyConfig tc; ToyGgufConfig gc;
     auto set = [&](int64_t& a, int64_t& b, const char* v) { a = b = std::stoll(v); };
 
+    tc.vocab_size = gc.vocab_size = 256;
     for (int i = 2; i < argc; ++i) {
         std::string a = argv[i];
         auto nx = [&]{ return (i + 1 < argc) ? argv[++i] : "0"; };

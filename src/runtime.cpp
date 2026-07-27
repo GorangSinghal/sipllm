@@ -4,6 +4,7 @@
 #include "llm/gguf.h"
 #include "llm/common.h"
 #include "llm/neon.h"
+#include "llm/mem_plan.h"
 
 #include <algorithm>
 
@@ -29,36 +30,36 @@ static size_t runtime_reserve_bytes(const ModelConfig& c, int ctx) {
 }
 
 Runtime::Runtime(std::unique_ptr<WeightSource> src, LayerLoader::Options opt,
-                 int max_ctx, int threads, size_t ram_budget_total)
+                 int max_ctx, int threads, size_t ram_budget_total, bool force_budget)
     : src_(std::move(src)), opt_(opt) {
     cfg_ = ModelConfig::from_source(*src_);
     set_fast_quant(opt_.fast_quant);   // #demo: opt-in int8 SDOT for Q8_0 (--fast)
     LLM_CHECK(cfg_.n_layers > 0 && cfg_.dim > 0, "runtime: invalid model config");
 
-    // Cap the DEFAULT context window. Modern models advertise huge windows
-    // (Llama 3.2 = 131072), and the KV cache is allocated for the full window up
-    // front — at 131072 that's multiple GB, an instant OOM on an edge device.
-    // So unless the caller asks for a specific --ctx, use the model's window
-    // clamped to a modest edge-friendly default. Power users raise it explicitly.
-    constexpr int64_t kDefaultMaxCtx = 4096;
-    int ctx;
-    if (max_ctx > 0)              ctx = max_ctx;                       // explicit --ctx
-    else if (cfg_.ctx_len > 0)    ctx = (int)std::min<int64_t>(cfg_.ctx_len, kDefaultMaxCtx);
-    else                          ctx = 2048;
+    BudgetRequest req;
+    req.budget_bytes = ram_budget_total;
+    req.ctx_req = max_ctx;
+    req.ctx_explicit = (max_ctx > 0);
+    req.n_buffers_req = opt_.n_buffers;
+    req.async_req = opt_.async;
+    req.residency = opt_.residency;
+    req.stream_head_req = opt_.stream_lm_head;
+    req.force = force_budget;
+    req.default_ctx_cap = 4096;
 
-    // #37: translate the TOTAL peak-RSS target into the loader's WEIGHT ceiling
-    // by reserving the KV cache (allocated up to `ctx`) and a scratch allowance.
+    MemoryPlan plan = plan_memory(*src_, cfg_, req);
+
     if (ram_budget_total > 0) {
-        const size_t kv_max  = (size_t)cfg_.n_layers * (size_t)cfg_.kv_dim()
-                             * (size_t)ctx * 2 * sizeof(float);
-        const size_t reserve = runtime_reserve_bytes(cfg_, ctx);
-        opt_.ram_budget_bytes = ram_budget_total > kv_max + reserve
-                              ? ram_budget_total - kv_max - reserve : 0;
-        if (opt_.ram_budget_bytes == 0)
-            LOG_WARN("ram-budget %.0f MB <= KV(%.0f MB)+reserve(%.0f MB): no layers "
-                     "pinned (pure streaming); lower --ctx for a tighter ceiling",
-                     ram_budget_total/1e6, kv_max/1e6, reserve/1e6);
+        fprintf(stderr, "\n%s\n", plan.report.c_str());
+        if (!plan.feasible && !plan.overridden) {
+            throw Error("RAM budget impossible. Use --ram-budget-force to run anyway.");
+        }
     }
+
+    int ctx = plan.ctx;
+    opt_.stream_lm_head = plan.stream_lm_head;
+    opt_.n_buffers = plan.n_buffers;
+    opt_.ram_budget_bytes = plan.weight_ceiling;
 
     pool_ = std::make_unique<ThreadPool>(threads);
     opt_.dequant_pool = pool_.get();

@@ -41,6 +41,34 @@ Confidence:            High — v0.4 numbers measured vs llama.cpp on tinyllama 
 
 ## [0.4.0] — Developer Preview (2026-07-27)
 
+### Wave 8 — Flutter FFI bindings + on-device productization (M6.5, in progress)
+
+Makes SipLLM a phone/watch citizen without touching the runtime's math. A stable
+C ABI (`bindings/flutter/sipllm_flutter/ffi/sipllm_ffi.h`) wraps the C++ engine in
+opaque handles + POD structs + a C token callback; the callback's `false` return
+is the cancellation seam, and `--ram-budget` / threads / scheduler / Vulkan are
+plumbed through a zero-init `sipllm_params` whose defaults reproduce the CLI.
+
+- **Native shim + CMake** compile the *shared* `src/*.cpp` (no runtime code
+  duplicated) into `libsipllm_ffi` for desktop, and per-ABI for Android
+  (arm64-v8a / armeabi-v7a / x86_64) via the NDK.
+- **Dart runtime** (`SipllmRuntime`) runs inference on a worker isolate, streams
+  tokens over a `Stream<SipllmToken>`, and cancels mid-generate from the UI
+  isolate via the thread-safe atomic in `sipllm_cancel` (no polling, no UI block).
+- **On-device embeddings** via the final-layer hidden-state hook (L2-normalized),
+  backed by a SQLite float32 vector store with cosine top-k search.
+- **Resumable Hugging Face downloader** — multi-connection HTTP Range, sidecar
+  resume across process restarts, pause/resume/cancel, sha256 verify.
+- **Phone -> Wear OS transfer** over the Wearable Data Layer `ChannelClient`
+  (Bluetooth for control, Wi-Fi High-Bandwidth for bulk). RFCOMM is intentionally
+  avoided (Wear OS does not expose it); resumable header/ack protocol.
+
+**Verified on host (macOS / Apple M3):** C-ABI smoke test (generate + cancel +
+embed), the full Dart -> isolate -> FFI path, downloader (5 tests), embedding
+store (13 tests), engine `make test` green, `flutter analyze` clean. **Not yet
+runtime-verified:** the Android APK / on-device inference (POCO X6 Pro) and the
+Wear transfer on the paired OnePlus Watch 2 — the remainder of M6.5.
+
 ### Wave 7 — Demo v1: `--fast` int8 SDOT kernel + near-parity Q8 decode
 
 Closes the decode gap that stood between SipLLM and a "wow" demo. `linear()`

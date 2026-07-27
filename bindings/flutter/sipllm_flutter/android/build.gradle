@@ -1,0 +1,83 @@
+// android/build.gradle — Android library module for the sipllm_flutter FFI +
+// method-channel plugin. This compiles the native engine (libsipllm_ffi.so, one
+// pass per ABI, via the shared ../src/CMakeLists.txt) and the Kotlin bridge that
+// exposes device profiling + the Wear OS Data Layer model transfer.
+group = "com.sipllm.flutter"
+version = "0.4.0"
+
+buildscript {
+    // AGP 8.5.x + Kotlin 1.9.24: a modern, stable combo compatible with the
+    // Flutter 3.41 Android toolchain (Gradle 8.x, JDK 17).
+    ext.kotlin_version = "1.9.24"
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        classpath "com.android.tools.build:gradle:8.5.2"
+        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
+    }
+}
+
+rootProject.allprojects {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+apply plugin: "com.android.library"
+apply plugin: "kotlin-android"
+
+android {
+    namespace = "com.sipllm.flutter"
+    compileSdk = 35
+    ndkVersion = "27.0.12077973"
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_11
+        targetCompatibility = JavaVersion.VERSION_11
+    }
+
+    kotlinOptions {
+        jvmTarget = "11"
+    }
+
+    sourceSets {
+        main.java.srcDirs += "src/main/kotlin"
+    }
+
+    defaultConfig {
+        minSdk = 23
+
+        // The engine .so is C++; c++_shared is required because more than one
+        // native library in the final APK may link the STL, and a single shared
+        // runtime avoids the "multiple c++ runtimes" ODR hazard.
+        externalNativeBuild {
+            cmake {
+                arguments += ["-DANDROID_STL=c++_shared"]
+            }
+        }
+
+        // Ship only the ABIs the SipLLM SIMD kernels target. x86_64 is kept for
+        // the emulator; 32-bit x86 is intentionally dropped.
+        ndk {
+            abiFilters "arm64-v8a", "armeabi-v7a", "x86_64"
+        }
+    }
+
+    // Drive the shared CMake project. Flutter's Gradle glue picks up the
+    // per-ABI libsipllm_ffi.so produced here and packages it into the APK.
+    externalNativeBuild {
+        cmake {
+            path = "../src/CMakeLists.txt"
+        }
+    }
+}
+
+dependencies {
+    implementation "org.jetbrains.kotlin:kotlin-stdlib:$kotlin_version"
+    // Wearable Data Layer (ChannelClient / NodeClient / CapabilityClient) — the
+    // sanctioned transport for paired phone <-> watch bulk transfer.
+    implementation "com.google.android.gms:play-services-wearable:18.2.0"
+}

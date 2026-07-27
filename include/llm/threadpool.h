@@ -41,48 +41,102 @@ public:
 
     int size() const { return n_; }
 
-    // Run fn(thread_id, begin, end) over [0, total) split into n_ contiguous
-    // chunks. Blocks until every chunk completes. Safe to nest? No — do not
-    // call parallel_for from within a worker body.
+    enum class SchedulePolicy {
+        Static,
+        Fixed8,
+        Fixed16,
+        Fixed32,
+        Proportional2,
+        Proportional4,
+        Adaptive
+    };
+
+    struct Stats {
+        std::atomic<uint64_t> chunks_processed{0};
+        std::atomic<uint64_t> steals{0};
+        std::atomic<uint64_t> idle_time_us{0};
+        std::atomic<uint64_t> barrier_time_us{0};
+        void reset() {
+            chunks_processed = 0;
+            steals = 0;
+            idle_time_us = 0;
+            barrier_time_us = 0;
+        }
+    };
+
+    Stats stats;
+    SchedulePolicy policy = SchedulePolicy::Proportional4;
+
+    void set_policy(SchedulePolicy p) { policy = p; }
+
     void parallel_for(int64_t total,
                       const std::function<void(int, int64_t, int64_t)>& fn) {
         if (total <= 0) return;
         if (n_ == 1) { fn(0, 0, total); return; }
 
-        // Balanced contiguous partition.
-        const int64_t chunk = (total + n_ - 1) / n_;
         {
             std::unique_lock<std::mutex> lk(m_);
             fn_ = &fn;
             total_ = total;
-            chunk_ = chunk;
+            next_row_.store(0, std::memory_order_relaxed);
+            
+            // Calculate chunk size based on policy
+            if (policy == SchedulePolicy::Static) chunk_ = (total + n_ - 1) / n_;
+            else if (policy == SchedulePolicy::Fixed8) chunk_ = 8;
+            else if (policy == SchedulePolicy::Fixed16) chunk_ = 16;
+            else if (policy == SchedulePolicy::Fixed32) chunk_ = 32;
+            else if (policy == SchedulePolicy::Proportional2) chunk_ = std::max<int64_t>(1, total / (n_ * 2));
+            else if (policy == SchedulePolicy::Proportional4) chunk_ = std::max<int64_t>(1, total / (n_ * 4));
+            else if (policy == SchedulePolicy::Adaptive) chunk_ = std::max<int64_t>(16, total / (n_ * 4));
+            
             remaining_ = n_ - 1;   // workers we wait on (calling thread does its own)
             ++generation_;
         }
         cv_.notify_all();
 
-        // Calling thread handles chunk 0.
         run_chunk(0);
+        double end_time = now_sec();
 
         // Wait for workers.
         std::unique_lock<std::mutex> lk(m_);
         done_cv_.wait(lk, [this] { return remaining_ == 0; });
+        stats.barrier_time_us.fetch_add((uint64_t)((now_sec() - end_time) * 1e6), std::memory_order_relaxed);
         fn_ = nullptr;
     }
 
 private:
     void run_chunk(int tid) {
-        int64_t begin = static_cast<int64_t>(tid) * chunk_;
-        if (begin >= total_) return;
-        int64_t end = std::min(begin + chunk_, total_);
-        (*fn_)(tid, begin, end);
+        if (policy == SchedulePolicy::Static) {
+            int64_t begin = static_cast<int64_t>(tid) * chunk_;
+            if (begin >= total_) return;
+            int64_t end = std::min(begin + chunk_, total_);
+            stats.chunks_processed.fetch_add(1, std::memory_order_relaxed);
+            (*fn_)(tid, begin, end);
+            return;
+        }
+
+        // Dynamic work-stealing loop
+        while (true) {
+            int64_t begin = next_row_.fetch_add(chunk_, std::memory_order_relaxed);
+            if (begin >= total_) break;
+            int64_t end = std::min(begin + chunk_, total_);
+            stats.chunks_processed.fetch_add(1, std::memory_order_relaxed);
+            if (begin > 0) stats.steals.fetch_add(1, std::memory_order_relaxed); // Proxy for steals
+            (*fn_)(tid, begin, end);
+        }
     }
 
     void worker_loop(int tid) {
+        // Platform specific affinity / QoS
+#if defined(__APPLE__)
+        pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
+#endif
         uint64_t seen = 0;
         for (;;) {
+            double wait_start = now_sec();
             std::unique_lock<std::mutex> lk(m_);
             cv_.wait(lk, [this, &seen] { return stop_ || generation_ != seen; });
+            stats.idle_time_us.fetch_add((uint64_t)((now_sec() - wait_start) * 1e6), std::memory_order_relaxed);
             if (stop_) return;
             seen = generation_;
             lk.unlock();
@@ -105,6 +159,7 @@ private:
 
     const std::function<void(int, int64_t, int64_t)>* fn_ = nullptr;
     int64_t total_ = 0, chunk_ = 0;
+    std::atomic<int64_t> next_row_{0};
 };
 
 // Process-wide default pool, lazily created.

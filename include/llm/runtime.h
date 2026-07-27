@@ -47,12 +47,13 @@ public:
     // ram_budget_total (bytes, 0 = unlimited) is a TOTAL peak-RSS target; the
     // ctor derives the loader's weight ceiling from it (subtracting KV + scratch).
     Runtime(std::unique_ptr<WeightSource> src, LayerLoader::Options opt,
-            int max_ctx = 0, int threads = 0, size_t ram_budget_total = 0);
+            int max_ctx = 0, int threads = 0, size_t ram_budget_total = 0, bool force_budget = false);
 
     const ModelConfig& config() const { return cfg_; }
     const Tokenizer&   tokenizer() const { return tok_; }
     size_t weights_resident_bytes() const { return loader_->resident_bytes(); }
     size_t kv_bytes() const { return kv_->bytes(); }
+    ThreadPool* thread_pool() { return pool_.get(); }
 
     // Streaming callback: called with each newly produced piece of text and the
     // token id. Return false to stop early. `on_token` may be null.

@@ -1,0 +1,48 @@
+name: sipllm_flutter
+description: >-
+  Flutter FFI bindings for SipLLM — the streaming, memory-bounded LLM engine that
+  runs models larger than RAM. Bounded --ram-budget, octa-core CPU inference,
+  optional Vulkan, a resumable multi-connection Hugging Face download manager,
+  on-device embeddings + a SQLite vector store, and phone -> Wear OS model transfer.
+version: 0.4.0
+repository: https://github.com/ankit1057/sipllm
+publish_to: none
+
+environment:
+  sdk: ^3.8.0
+  flutter: ">=3.24.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  ffi: ^2.1.3
+  path: ^1.9.0
+  path_provider: ^2.1.4
+  sqlite3: ^2.4.6
+  sqlite3_flutter_libs: ^0.5.24
+  crypto: ^3.0.5
+  meta: ^1.15.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  test: ^1.25.8
+  flutter_lints: ^5.0.0
+  ffigen: ^13.0.0
+
+flutter:
+  plugin:
+    platforms:
+      # FFI plugin: the CMake build (src/CMakeLists.txt via android/) compiles
+      # libsipllm_ffi.so per ABI. The pluginClass registers the MethodChannel
+      # used by the Wear OS Data Layer model-transfer bridge.
+      android:
+        ffiPlugin: true
+        package: com.sipllm.flutter
+        pluginClass: SipllmFlutterPlugin
+      macos:
+        ffiPlugin: true
+      linux:
+        ffiPlugin: true
+      windows:
+        ffiPlugin: true

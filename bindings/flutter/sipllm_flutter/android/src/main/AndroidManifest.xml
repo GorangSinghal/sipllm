@@ -1,0 +1,28 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.sipllm.flutter">
+
+    <!-- Library module: no <activity>. The host app supplies the launcher. -->
+
+    <!-- Installable on both phones and watches: the watch feature is optional,
+         so the same plugin serves the phone (sender) and watch (receiver). -->
+    <uses-feature
+        android:name="android.hardware.type.watch"
+        android:required="false" />
+
+    <application>
+        <!-- Standalone Wear app declaration. Required so a Wear OS build that
+             embeds this plugin is recognized as an independent app on the
+             watch (rather than only a phone companion), which is what lets the
+             Data Layer route the /sipllm/model-transfer channel to it. Benign
+             on phone builds. -->
+        <meta-data
+            android:name="com.google.android.wearable.standalone"
+            android:value="true" />
+
+        <!-- play-services-wearable version metadata; the Data Layer runtime
+             reads this to negotiate capabilities with the paired device. -->
+        <meta-data
+            android:name="com.google.android.gms.version"
+            android:value="@integer/google_play_services_version" />
+    </application>
+</manifest>

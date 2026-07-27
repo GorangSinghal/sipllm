@@ -1,0 +1,4 @@
+// android/settings.gradle — names the standalone module. When consumed as a
+// Flutter plugin the host app's settings.gradle includes this module for us;
+// this file only matters for isolated `./gradlew` invocations of the plugin.
+rootProject.name = "sipllm_flutter"

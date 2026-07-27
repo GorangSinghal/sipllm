@@ -6,6 +6,8 @@
 //
 // Streams tokens to stdout as they are produced and prints a stats block.
 #include "llm/runtime.h"
+#include "llm/device_profile.h"
+#include "llm/auto_tuner.h"
 
 #include <cinttypes>
 #include <cstdio>
@@ -40,7 +42,7 @@ int main(int argc, char** argv) {
             "usage: %s <model> [-p prompt] [-n tokens] [-t temp]\n"
             "          [--top-k K] [--top-p P] [--repeat-penalty R] [--repeat-last-n N]\n"
             "          [--residency fp32|quant] [--mmap] [--no-async] [--stream-lm-head]\n"
-            "          [--buffers N] [--ctx N] [--threads N] [--seed S] [--greedy]\n"
+            "          [--buffers N] [--ctx N] [--threads N] [--seed S] [--greedy] [--schedule P]\n"
             "          [--ram-budget BYTES|N{K,M,G}] [--fast]\n",
             argv[0]);
         return 2;
@@ -49,6 +51,11 @@ int main(int argc, char** argv) {
     std::string prompt = "Hello";
     int max_new = 64, threads = 0, buffers = 2, ctx = 0;
     size_t ram_budget = 0;   // #37: total peak-RSS target (0 = unlimited)
+    bool force_budget = false;
+    AutoTunerOptions tuner_opt;
+    bool schedule_overridden = false;
+    bool threads_overridden = false;
+    ThreadPool::SchedulePolicy schedule_policy = ThreadPool::SchedulePolicy::Proportional2;
     SamplerConfig scfg;
     LayerLoader::Options opt;
 
@@ -72,17 +79,51 @@ int main(int argc, char** argv) {
         else if (a == "--stream-lm-head") opt.stream_lm_head = true;
         else if (a == "--buffers") buffers = std::stoi(next("2"));
         else if (a == "--ram-budget") ram_budget = parse_bytes(next("0"));
+        else if (a == "--ram-budget-force") force_budget = true;
         else if (a == "--fast") opt.fast_quant = true;
         else if (a == "--ctx") ctx = std::stoi(next("0"));
-        else if (a == "--threads") threads = std::stoi(next("0"));
+        else if (a == "--schedule") {
+            std::string s = next("proportional2");
+            if (s == "static") schedule_policy = ThreadPool::SchedulePolicy::Static;
+            else if (s == "fixed8") schedule_policy = ThreadPool::SchedulePolicy::Fixed8;
+            else if (s == "fixed16") schedule_policy = ThreadPool::SchedulePolicy::Fixed16;
+            else if (s == "fixed32") schedule_policy = ThreadPool::SchedulePolicy::Fixed32;
+            else if (s == "proportional2") schedule_policy = ThreadPool::SchedulePolicy::Proportional2;
+            else if (s == "proportional4") schedule_policy = ThreadPool::SchedulePolicy::Proportional4;
+            else if (s == "adaptive") schedule_policy = ThreadPool::SchedulePolicy::Adaptive;
+            else { fprintf(stderr, "unknown schedule: %s\n", s.c_str()); return 2; }
+            schedule_overridden = true;
+        }
+        else if (a == "--threads") {
+            std::string t = next("0");
+            if (t != "auto") {
+                threads = std::stoi(t);
+                threads_overridden = true;
+            }
+        }
+        else if (a == "--recalibrate") tuner_opt.force_recalibrate = true;
+        else if (a == "--no-autotune") tuner_opt.disable_autotune = true;
+        else if (a == "--profile-info") {
+            HardwareInfo hw = get_hardware_info();
+            printf("Hardware ID: %s\n", hw.hardware_id().c_str());
+            printf("%s\n", hw.to_json(2).c_str());
+            return 0;
+        }
         else { fprintf(stderr, "unknown arg: %s\n", a.c_str()); return 2; }
     }
     if (opt.async) opt.n_buffers = buffers;
 
     try {
         double t0 = now_sec();
+        
+        HardwareInfo hw = get_hardware_info();
+        RuntimeProfile rp = tune_if_needed(hw, tuner_opt);
+        if (!threads_overridden && rp.threads > 0) threads = rp.threads;
+        if (!schedule_overridden && rp.schedule_policy >= 0) schedule_policy = (ThreadPool::SchedulePolicy)rp.schedule_policy;
+        
         auto src = open_model(model, opt.use_mmap);
-        Runtime rt(std::move(src), opt, ctx, threads, ram_budget);
+        Runtime rt(std::move(src), opt, ctx, threads, ram_budget, force_budget);
+        if (rt.thread_pool()) rt.thread_pool()->set_policy(schedule_policy);
         double load_s = now_sec() - t0;
 
         fprintf(stderr, "model: %s\nconfig: %s\ntokenizer: %s vocab=%lld\n",
@@ -120,7 +161,11 @@ int main(int argc, char** argv) {
             "kv cache:        %.1f MB\n"
             "streamed:        %.1f MB (from disk)\n"
             "prefetch:        %" PRIu64 " hits / %" PRIu64 " misses\n"
-            "context:         %d / %d\n",
+            "context:         %d / %d\n"
+            "sched chunks:    %" PRIu64 "\n"
+            "sched steals:    %" PRIu64 "\n"
+            "sched idle:      %.2f ms\n"
+            "sched barrier:   %.2f ms\n",
             rss / 1e6,
             st.pinned_layers, (int)rt.config().n_layers, budget_note,
             opt.fast_quant ? "on" : "off",
@@ -128,7 +173,11 @@ int main(int argc, char** argv) {
             st.prompt_tokens, st.gen_tokens,
             st.weights_resident_bytes / 1e6, st.kv_bytes / 1e6,
             st.bytes_read / 1e6, st.prefetch_hits, st.prefetch_misses,
-            st.ctx_used, st.ctx_max);
+            st.ctx_used, st.ctx_max,
+            rt.thread_pool()->stats.chunks_processed.load(),
+            rt.thread_pool()->stats.steals.load(),
+            rt.thread_pool()->stats.idle_time_us.load() / 1000.0,
+            rt.thread_pool()->stats.barrier_time_us.load() / 1000.0);
         return 0;
     } catch (const std::exception& e) {
         fprintf(stderr, "\nerror: %s\n", e.what());

@@ -140,3 +140,12 @@ $(BUILD)/%: tests/%.cpp $(OBJ)
 
 clean:
 	rm -rf $(BUILD)
+
+.PHONY: benchmark benchmark-ci
+
+benchmark:
+	python3 scripts/run_benchmarks.py
+
+benchmark-ci:
+	python3 scripts/run_benchmarks.py --ci
+

@@ -112,9 +112,24 @@ TEST(matmul_threaded_matches_serial) {
     for (auto& v : W) v = d(rng);
     for (auto& v : x) v = d(rng);
     matmul(y1.data(), W.data(), x.data(), n_out, n_in, nullptr);      // serial
-    ThreadPool pool(4);
-    matmul(y2.data(), W.data(), x.data(), n_out, n_in, &pool);        // threaded
-    for (int i = 0; i < n_out; ++i) APPROX(y2[i], y1[i], 1e-4);
+    
+    std::vector<ThreadPool::SchedulePolicy> policies = {
+        ThreadPool::SchedulePolicy::Static,
+        ThreadPool::SchedulePolicy::Fixed8,
+        ThreadPool::SchedulePolicy::Fixed16,
+        ThreadPool::SchedulePolicy::Fixed32,
+        ThreadPool::SchedulePolicy::Proportional2,
+        ThreadPool::SchedulePolicy::Proportional4,
+        ThreadPool::SchedulePolicy::Adaptive
+    };
+
+    for (auto p : policies) {
+        ThreadPool pool(4);
+        pool.set_policy(p);
+        std::fill(y2.begin(), y2.end(), 0.0f);
+        matmul(y2.data(), W.data(), x.data(), n_out, n_in, &pool);        // threaded
+        for (int i = 0; i < n_out; ++i) APPROX(y2[i], y1[i], 1e-4);
+    }
 }
 
 TEST(matmul_batch_matches_single) {
