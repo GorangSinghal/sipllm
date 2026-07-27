@@ -1,0 +1,35 @@
+{
+  "meta": {
+    "benchmark": "bigger_than_ram",
+    "host": "Ankits-MacBook-Air",
+    "date": "2026-07-27",
+    "os": "macOS 26.5.2",
+    "cpu": "Apple M3",
+    "ram_gb": 16,
+    "ram_free_gb_at_run_approx": 3,
+    "config": "--stream-lm-head --no-async --ctx 512 --greedy --threads 4",
+    "cache_state": "cold-ish (model far exceeds free page cache)",
+    "peak_rss_source": "/usr/bin/time -l 'maximum resident set size' (bytes)",
+    "note": "Bounded-memory demonstration on real, coherent models whose weights far exceed free RAM. Peak RSS tracks a single layer (width), not the model size. Streaming an off-cache model is disk-bound (<1 tok/s at this extreme); raise --ram-budget to trade RAM for speed.",
+    "reproduce": "sipllm pull llama3.1:8b:q4_k_m; ./build/llm ~/.sipllm/models/llama3.1-8b-q4_k_m.gguf -p 'The capital of France is' -n 20 --greedy --ctx 512 --stream-lm-head --no-async"
+  },
+  "runs": [
+    {
+      "model": "TinyLlama-1.1B-Chat", "quant": "Q8_0",
+      "weights_gb": 1.17, "peak_rss_mb": 61, "model_over_rss": 19.2,
+      "decode_tok_s": null, "coherent": true
+    },
+    {
+      "model": "Llama-3.1-8B-Instruct", "quant": "Q4_K_M",
+      "weights_gb": 4.92, "peak_rss_mb": 204, "model_over_rss": 24.1,
+      "decode_tok_s": 0.55, "coherent": true,
+      "output": "The capital of France is a city of grandeur and beauty, with a rich history and culture that is"
+    },
+    {
+      "model": "Llama-2-13B-Chat", "quant": "Q4_K_M",
+      "weights_gb": 7.87, "peak_rss_mb": 317, "model_over_rss": 24.8,
+      "decode_tok_s": 0.35, "coherent": true,
+      "output": "The capital of France is Paris.\n\nThe currency of France is the Euro."
+    }
+  ]
+}

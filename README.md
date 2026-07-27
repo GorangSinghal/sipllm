@@ -103,6 +103,14 @@ M=~/.sipllm/models/llama3.1-8b-q4_k_m.gguf
 # → coherent output at ~204 MB peak RSS for a 4.9 GB model
 ```
 
+**Reproducible.** Every number above is committed under
+[`bench/results/`](bench/results/) as machine-readable JSON
+(`demo-v0.4-*.json`, `bigger-than-ram-*.json`, `ram-budget-*.json`), regenerated
+by `scripts/bench.sh` / `scripts/bench_ram_budget.sh`. The full unit-test run
+(all binaries green) is captured in
+[`bench/results/test-results-2026-07-27.txt`](bench/results/) — reproduce with
+`make test`.
+
 ## Why "sip"?
 
 The usual way to run an LLM loads the entire model into memory. A 1.1 B model in

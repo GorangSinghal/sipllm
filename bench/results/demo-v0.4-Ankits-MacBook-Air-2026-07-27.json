@@ -1,0 +1,20 @@
+{
+  "meta": {
+    "benchmark": "demo_v0.4_fast_q8",
+    "host": "Ankits-MacBook-Air",
+    "date": "2026-07-27",
+    "os": "macOS 26.5.2",
+    "cpu": "Apple M3",
+    "model": "TinyLlama-1.1B-Chat Q8_0 (1.17 GB)",
+    "ctx": 512, "threads": 4, "greedy": true,
+    "median_of_n": 3, "cache_state": "warm",
+    "peak_rss_source": "/usr/bin/time -l 'maximum resident set size' (bytes)",
+    "note": "--fast routes Q8_0 projections through an int8 SDOT kernel (opt-in; numerically equivalent, activation-int8 like llama.cpp). llama.cpp decode from llama-bench tg32 (high fanless variance, tg16 was 62.5).",
+    "reproduce": "./scripts/bench_ram_budget.sh ; and see README 'Demo' section"
+  },
+  "runs": [
+    {"runtime": "llama.cpp", "config": "-ngl 0 -t 4 (CPU)", "peak_rss_mb": 2326, "decode_tok_s": 56.9},
+    {"runtime": "sipllm", "config": "--fast --ram-budget 1200M (resident)", "peak_rss_mb": 1113, "decode_tok_s": 50.3, "pinned_layers": "22/22", "vs_llama": "2.09x less RAM, ~12% slower (within 20%)"},
+    {"runtime": "sipllm", "config": "--fast (streaming)", "peak_rss_mb": 175, "decode_tok_s": 6.8, "pinned_layers": "0/22", "vs_llama": "13.3x less RAM"}
+  ]
+}
