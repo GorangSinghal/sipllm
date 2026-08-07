@@ -37,7 +37,7 @@ This is a live message board, not documentation. Keep it accurate as you go.
 | Session | Model | Files it owns / is editing | Status |
 |---------|-------|----------------------------|--------|
 | `opus-sipir` | Opus 4.8 | `include/llm/sip_ir.h` (in-memory half), `src/sip_ir.cpp`, `tools/ir_dump.cpp`, `tests/test_sip_ir.cpp`, `include/llm/loader.h` (made `role_suffix` public), `AGENTS.md` | **Sip IR v0.1 in-memory layer + GGUF importer + `ir_dump` tool. 12 tests pass. Committed to `main`.** Not taking on Kosh/RTK/kernels/tool-calling/vision — those are the Sonnet session's. |
-| `sonnet-platform` | Sonnet 4.6 (+3 subagents) | `include/llm/sip_ir.h` (on-disk binary format section), `include/llm/kosh.h`, `include/llm/rtk.h`, `include/llm/mem_manager.h`, K-quant kernels (`src/neon.cpp` / `include/llm/neon.h` / `src/quant.cpp`), `tests/test_quant_kernels.cpp`, and (new) tool-calling + vision/multimodal infra | Kosh + RTK + memory manager + K-quant NEON/AVX2 kernels + Sip IR binary format + tool-calling & image-model support — **actively building (please keep this row current).** |
+| `sonnet-platform` | Sonnet 4.6 (+3 subagents) | `include/llm/kosh.h`, `include/llm/rtk.h`, `include/llm/linear.h` (pending), K-quant kernels (via subagent `8f8db789`), MemManager+Scheduler+INT8KV (via subagent `55a9ec84`), Sip IR binary format (via subagent `54d66ab8`) | **See detailed ownership table below.** All subagents running. Kernel agent WIP. Two agents done. |
 
 > Other agents: replace the `_(other)_` row with your real session id and the
 > exact files you hold, and add new rows as you take on more.
@@ -55,15 +55,14 @@ or renumber across the banner:
   `SipModel`).
 - **On-disk binary format** (`kSipIRMagic`, `SipIRHeader`,
   `SipIRTensorDescriptor`) — owned by the format/kernels session; serializer
-  implementation TBD (suggest `src/sip_serialize.cpp`, not `src/sip_ir.cpp`, to
-  avoid two sessions editing one `.cpp`).
+  implemented in `src/sip_ir_writer.cpp` + `src/sip_ir_reader.cpp` (done).
 
 Keep them decoupled: the in-memory `SipModel` must not depend on the on-disk
 struct layout, and vice-versa.
 
 ---
 
-## What we're building (so parallel work stays aligned)
+## What we're building (platform vision — canonical reference)
 
 SipLLM is becoming a **universal, dependency-free, CPU-first / edge-first
 inference platform**, not "another GGUF loader." Identity is fixed:
@@ -73,25 +72,12 @@ token/context optimization layer (not a bot) · **RTK** = token pipeline ·
 plugins only for *importing* external ecosystems (HF/PyTorch/ONNX/GGUF), never
 in the core runtime.
 
-Phase 1 (finish first): Sip IR · streaming engine · memory manager · KV manager ·
-scheduler · CPU backend · GPU/NPU backend plugins · continuous benchmarks.
-Phase 2: Kosh (token pruning, context compression, semantic cache, spec-decoding)
-+ RTK. Phase 3: universal importers → Sip IR. Phases 4–8: performance,
-distributed runtime, SDK, production tooling, research.
-
-Current highest-leverage Phase-1 work in flight: **K-quant fused kernels**
-(biggest decode win — North Star's #1 bottleneck) and **Sip IR** (the keystone
-every importer/backend depends on).
-
-**Newly in scope (2026 — product direction):** **tool calling** (a
-function-calling protocol) and **image/multimodal (vision) model support** are
-required for Kosh + RTK to be an *application platform* rather than a smart
-prompt router. Owned by the `sonnet-platform` session (`rtk.h` + tool-calling,
-vision infra). Keep the zero-dependency, CPU-first constraint: vision preprocess
-(patchify/normalize) and the tool-call parser must be standard C++17, no new
-libraries. Design them against **Sip IR** so a vision encoder is just another
-importable model + a modality tag on the IR — not a special case bolted onto the
-runtime.
+**Newly locked in scope (2026-08-07):**
+- **Tool calling**: `ToolRegistry` + `ToolParser` (zero-dep JSON state machine) in `rtk.h`.
+  Required for Kosh + RTK to be a real application platform, not just a prompt router.
+- **Vision / multimodal**: `VisionEncoder` (ViT, pure C++17) + `MultimodalProjector` in `rtk.h`.
+  Image input = raw float32 RGB pixels (`ImageTensor`). PNG/JPEG decode = caller plugin.
+  Vision encoder weights use LLaVA/CLIP tensor naming convention (`v.blk.N.*`).
 
 ---
 
@@ -101,4 +87,89 @@ runtime.
 make -j4 all && make test          # every binary + full unit suite (keep green)
 ./build/ir_dump <model.gguf>       # dump a model's Sip IR (inspect primitive)
 ./build/ir_dump <model.gguf> --summary
+python3 golden/validate_matrix.py --prompt "The capital of France is"  # golden gate
+```
+
+---
+
+## Fine-grained file ownership (sonnet-platform sprint — 2026-08-07)
+
+**Do not touch a file whose STATUS is 🔄 WIP or owned by another agent.**
+**Pick from ⬜ QUEUE to take on new work — write your agent ID first.**
+
+| File | Agent | Status | Notes |
+|:-----|:------|:------:|:------|
+| `src/neon.cpp` | kernel-agent `8f8db789` | ✅ DONE | Q4_K + Q5_K + Q6_K NEON + AVX2 |
+| `include/llm/neon.h` | kernel-agent `8f8db789` | ✅ DONE | fast_quant_k declarations |
+| `src/quant.cpp` | kernel-agent `8f8db789` | ✅ DONE | K-quant dispatch hook |
+| `tests/test_quant_kernels.cpp` | kernel-agent `8f8db789` | ✅ DONE | NEW — correctness vs fp32 |
+| `include/llm/sip_ir_writer.h` | sip-ir-agent `54d66ab8` | ✅ DONE | — |
+| `include/llm/sip_ir_reader.h` | sip-ir-agent `54d66ab8` | ✅ DONE | — |
+| `src/sip_ir_writer.cpp` | sip-ir-agent `54d66ab8` | ✅ DONE | Streaming writer |
+| `src/sip_ir_reader.cpp` | sip-ir-agent `54d66ab8` | ✅ DONE | WeightSource impl |
+| `tools/gguf_to_sipir.cpp` | sip-ir-agent `54d66ab8` | ✅ DONE | CLI converter |
+| `tests/test_sip_ir.cpp` | sip-ir-agent `54d66ab8` | ✅ DONE | Roundtrip test |
+| `docs/sip-ir-spec.md` | sip-ir-agent `54d66ab8` | ✅ DONE | Binary format spec |
+| `src/runtime.cpp` | sip-ir-agent `54d66ab8` | ✅ DONE | SIPR magic in open_model() |
+| `include/llm/mem_manager.h` | mem-agent `55a9ec84` | ✅ DONE | Byte-accounting layer |
+| `src/mem_manager.cpp` | mem-agent `55a9ec84` | ✅ DONE | global_mem_manager() |
+| `include/llm/scheduler.h` | mem-agent `55a9ec84` | ✅ DONE | FIFO scheduler |
+| `src/scheduler.cpp` | mem-agent `55a9ec84` | ✅ DONE | Worker thread + future |
+| `include/llm/kv_cache.h` | mem-agent `55a9ec84` | ✅ DONE | KVPrecision::INT8 |
+| `src/kv_cache.cpp` | mem-agent `55a9ec84` | ✅ DONE | INT8 KV path |
+| `tests/test_kv_int8.cpp` | mem-agent `55a9ec84` | ✅ DONE | Error bound test |
+| `include/llm/kosh.h` | coordinator `c124475c` | ✅ DONE | Kosh + SpecDecoder + SemanticCache |
+| `include/llm/rtk.h` | coordinator `c124475c` | ✅ DONE | RTK: tools + vision + chat template |
+| `include/llm/linear.h` | coordinator `c124475c` | ⏳ PENDING | After kernel-agent `8f8db789` done |
+| `src/kosh.cpp` | **OPEN** | ⬜ QUEUE | SpecDecoder + SemanticCache impl |
+| `src/rtk_tools.cpp` | opus-sipir | ✅ DONE | ToolRegistry / ToolParser (zero-dep JSON state machine) / ToolDef / render_chat (8 styles) / style_from_model — the self-contained tool+chat half of `rtk.h`. Built + 11 tests pass standalone; committed+pushed. |
+| `src/rtk.cpp` | **OPEN** | ⬜ QUEUE | **RTK orchestrator class + vision glue ONLY.** ⚠️ Tool/chat symbols (ToolRegistry, ToolParser, ToolDef::schema_text, ToolCall::get/has, render_chat, style_from_model) are ALREADY defined in `src/rtk_tools.cpp` — do **NOT** redefine them here or `make` fails with a duplicate-symbol (ODR) link error for every binary. |
+| `src/vision_encoder.cpp` | **OPEN** | ⬜ QUEUE | ViT fwd pass, pure C++17 |
+| `src/multimodal_projector.cpp` | **OPEN** | ⬜ QUEUE | 2-layer GELU MLP |
+| `tests/test_tool_calling.cpp` | opus-sipir | ✅ DONE | 11 tests: registry, incremental JSON parser (marker + raw modes, escapes, nested objects), 8 chat templates, tool injection. Passes standalone. |
+| `tests/test_rtk_chat.cpp` | **OPEN** | ⬜ QUEUE | After rtk.cpp done |
+| `server/server.cpp` | **OPEN** | ⬜ QUEUE | Refactor to use Scheduler |
+| `scripts/bench_matrix.sh` | **OPEN** | ⬜ QUEUE | Full benchmark automation |
+
+---
+
+## Architecture decisions — locked, do not deviate
+
+| Decision | Constraint |
+|:---------|:-----------|
+| Tool call JSON parser | Hand-written state machine. No nlohmann/json. No regex. |
+| Tool schemas | C++ `ToolDef` structs — not JSON Schema strings. |
+| Vision input type | `ImageTensor` (float32 RGB). Caller does PNG/JPEG decode. |
+| Vision encoder weight names | `v.blk.N.*` (LLaVA/CLIP convention) |
+| Projector weight names | `mm.0.weight`, `mm.0.bias`, `mm.2.weight`, `mm.2.bias` |
+| Kosh scope | Multi-turn lifecycle: spec decode, semantic cache, context compression |
+| RTK scope | Single-turn: template render, tool dispatch, image inject, prefix cache |
+| KV cache default | `FP32` unchanged. `INT8` is explicit opt-in. |
+| Scheduler now | Single-model FIFO. Multi-model = Phase 5. |
+| Sip IR in-memory vs on-disk | Decoupled. `SipModel` ≠ `SipIRHeader`. Never cross-depend. |
+
+---
+
+## Status log
+
+```
+2026-08-07 23:44  coordinator    Launched kernel-agent, sip-ir-agent, mem-agent (parallel)
+2026-08-07 23:45  coordinator    ✅ include/llm/kosh.h written
+2026-08-07 23:48  coordinator    ✅ include/llm/rtk.h written (tool calling + vision + chat)
+2026-08-07 23:50  sip-ir-agent   ✅ sip_ir_writer/reader, gguf_to_sipir, test, spec, runtime patch
+2026-08-07 23:50  mem-agent      ✅ mem_manager, scheduler, kv_cache INT8, test_kv_int8
+2026-08-07 23:51  coordinator    ✅ AGENTS.md fully updated (this entry)
+2026-08-07 23:xx  kernel-agent   ✅ DONE: Q4_K/Q5_K/Q6_K NEON + AVX2
+```
+
+---
+
+## What ankit is working on
+
+_Update this before you start coding — prevents duplication._
+
+```
+[ ] File(s): _______________
+[ ] Task: _______________
+[ ] ETA: _______________
 ```
