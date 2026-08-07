@@ -36,7 +36,7 @@ This is a live message board, not documentation. Keep it accurate as you go.
 
 | Session | Model | Files it owns / is editing | Status |
 |---------|-------|----------------------------|--------|
-| `opus-sipir` | Opus 4.8 | `include/llm/sip_ir.h` (in-memory half), `src/sip_ir.cpp`, `tools/ir_dump.cpp`, `tests/test_sip_ir.cpp`, `include/llm/loader.h` (made `role_suffix` public), `AGENTS.md` | **Sip IR v0.1 in-memory layer + GGUF importer + `ir_dump` tool. 12 tests pass. Committed to `main`.** Not taking on Kosh/RTK/kernels/tool-calling/vision — those are the Sonnet session's. |
+| `opus-sipir` | Opus 4.8 | `sip_ir.{h,cpp}` (in-memory half), `tools/ir_dump.cpp`, `src/rtk_tools.cpp`, `include/llm/safetensors.{h,cpp}`, their tests, `loader.h` (role_suffix public), `AGENTS.md` | **Shipped + pushed, all green: Sip IR v0.1 (12 tests) · `ir_dump` · RTK tool-calling+chat core (11 tests) · HF safetensors importer (5 tests).** Deferring Kosh / K-quant kernels / RTK orchestrator / vision to the Sonnet session. |
 | `sonnet-platform` | Sonnet 4.6 (+3 subagents) | `include/llm/kosh.h`, `include/llm/rtk.h`, `include/llm/linear.h` (pending), K-quant kernels (via subagent `8f8db789`), MemManager+Scheduler+INT8KV (via subagent `55a9ec84`), Sip IR binary format (via subagent `54d66ab8`) | **See detailed ownership table below.** All subagents running. Kernel agent WIP. Two agents done. |
 
 > Other agents: replace the `_(other)_` row with your real session id and the
@@ -123,6 +123,8 @@ python3 golden/validate_matrix.py --prompt "The capital of France is"  # golden 
 | `include/llm/linear.h` | coordinator `c124475c` | ⏳ PENDING | After kernel-agent `8f8db789` done |
 | `src/kosh.cpp` | **OPEN** | ⬜ QUEUE | SpecDecoder + SemanticCache impl |
 | `src/rtk_tools.cpp` | opus-sipir | ✅ DONE | ToolRegistry / ToolParser (zero-dep JSON state machine) / ToolDef / render_chat (8 styles) / style_from_model — the self-contained tool+chat half of `rtk.h`. Built + 11 tests pass standalone; committed+pushed. |
+| `include/llm/safetensors.{h,cpp}` | opus-sipir | ✅ DONE | **Phase-3 importer #1:** HF `safetensors` + `config.json` as a `WeightSource`. Maps HF tensor names → GGUF names and HF config → the `<arch>.*` meta keys, so an unconverted HF checkpoint flows through the SAME importer→IR→loader→executor stack. Zero-dep JSON parser. Committed+pushed. |
+| `tests/test_safetensors.cpp` | opus-sipir | ✅ DONE | Synthesizes a real safetensors + config; tests HF→GGUF mapping, config→meta, read_raw round-trip, and import_model → Sip IR. 5 tests pass standalone. |
 | `src/rtk.cpp` | **OPEN** | ⬜ QUEUE | **RTK orchestrator class + vision glue ONLY.** ⚠️ Tool/chat symbols (ToolRegistry, ToolParser, ToolDef::schema_text, ToolCall::get/has, render_chat, style_from_model) are ALREADY defined in `src/rtk_tools.cpp` — do **NOT** redefine them here or `make` fails with a duplicate-symbol (ODR) link error for every binary. |
 | `src/vision_encoder.cpp` | **OPEN** | ⬜ QUEUE | ViT fwd pass, pure C++17 |
 | `src/multimodal_projector.cpp` | **OPEN** | ⬜ QUEUE | 2-layer GELU MLP |
