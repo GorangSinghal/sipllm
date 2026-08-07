@@ -126,6 +126,11 @@ public:
     size_t resident_bytes() const;           // approx current RAM for weights
     int    pinned_layers() const { return n_pinned_; } // resident hot layers (#37)
 
+    // GGUF tensor-name suffix for a role (e.g. "attn_q.weight"). Public so the
+    // Sip IR importer can resolve the per-role tensor schema without duplicating
+    // the mapping. role_name(layer, r) == names::blk(layer, role_suffix(r)).
+    static const char* role_suffix(Role r);
+
 private:
     struct Slot {
         int   layer = -1;
@@ -144,7 +149,6 @@ private:
     void   worker_loop();
     void   enqueue(int slot, int layer);     // caller holds mutex_
 
-    static const char* role_suffix(Role r);
     std::string role_name(int layer, Role r) const;
 
     WeightSource* src_;
