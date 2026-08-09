@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SipLLM AI Chat</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #0f172a;
+            --chat-bg: #1e293b;
+            --accent: #3b82f6;
+            --accent-hover: #2563eb;
+            --text: #f8fafc;
+            --text-muted: #94a3b8;
+            --grad-1: #0f172a;
+            --grad-2: #1e1b4b;
+            --grad-3: #172554;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: 'Inter', sans-serif;
+            background: linear-gradient(-45deg, var(--grad-1), var(--grad-2), var(--grad-3), var(--grad-1));
+            background-size: 400% 400%;
+            animation: gradientBG 15s ease infinite;
+            color: var(--text);
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        @keyframes gradientBG {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
+
+        #header {
+            background: rgba(30, 41, 59, 0.7);
+            backdrop-filter: blur(12px);
+            padding: 1rem 2rem;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            z-index: 10;
+            box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1);
+        }
+
+        #header h1 {
+            margin: 0;
+            font-size: 1.25rem;
+            font-weight: 600;
+            background: linear-gradient(90deg, #60a5fa, #a78bfa, #f472b6);
+            background-size: 200% auto;
+            color: #000;
+            background-clip: text;
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            animation: shine 5s linear infinite;
+        }
+
+        @keyframes shine {
+            to { background-position: 200% center; }
+        }
+        
+        #stats {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            display: flex;
+            gap: 1rem;
+            font-family: monospace;
+        }
+
+        #chat-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 2rem;
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+            padding-bottom: 8rem;
+            scroll-behavior: smooth;
+        }
+
+        .message {
+            display: flex;
+            gap: 1rem;
+            max-width: 800px;
+            margin: 0 auto;
+            width: 100%;
+            animation: slideUp 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+            opacity: 0;
+            transform: translateY(20px);
+            transition: transform 0.2s ease;
+        }
+
+        .message:hover {
+            transform: translateY(-2px);
+        }
+
+        @keyframes slideUp {
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .message.user {
+            flex-direction: row-reverse;
+        }
+
+        .avatar {
+            width: 38px;
+            height: 38px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+            flex-shrink: 0;
+            box-shadow: 0 4px 6px -1px rgba(0,0,0,0.3);
+            transition: box-shadow 0.3s ease;
+        }
+
+        .system .avatar { background: #10b981; color: #fff; }
+        .ai .avatar { background: linear-gradient(135deg, var(--accent), #8b5cf6); color: #fff; }
+        .user .avatar { background: linear-gradient(135deg, #475569, #334155); color: #fff; }
+
+        .ai.generating .avatar {
+            animation: avatarGlow 1.5s ease-in-out infinite alternate;
+        }
+
+        @keyframes avatarGlow {
+            from { box-shadow: 0 0 5px rgba(139, 92, 246, 0.5); }
+            to { box-shadow: 0 0 20px rgba(59, 130, 246, 0.8), 0 0 30px rgba(139, 92, 246, 0.6); }
+        }
+
+        .bubble {
+            background: rgba(30, 41, 59, 0.8);
+            backdrop-filter: blur(8px);
+            padding: 1rem 1.25rem;
+            border-radius: 1.2rem;
+            line-height: 1.6;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            border: 1px solid rgba(255,255,255,0.05);
+            font-size: 0.95rem;
+            transition: all 0.3s ease;
+        }
+
+        .message:hover .bubble {
+            box-shadow: 0 10px 20px -5px rgba(0, 0, 0, 0.3);
+            border-color: rgba(255,255,255,0.1);
+        }
+
+        .user .bubble {
+            background: linear-gradient(135deg, var(--accent), #2563eb);
+            color: white;
+            border: none;
+            border-bottom-right-radius: 0.3rem;
+        }
+        
+        .ai .bubble {
+            border-bottom-left-radius: 0.3rem;
+        }
+
+        .input-area {
+            position: absolute;
+            bottom: 0;
+            width: 100%;
+            padding: 2rem 0;
+            background: linear-gradient(to top, rgba(15, 23, 42, 1) 50%, rgba(15, 23, 42, 0));
+            display: flex;
+            justify-content: center;
+            pointer-events: none;
+        }
+
+        .input-wrapper {
+            width: 100%;
+            max-width: 760px;
+            position: relative;
+            display: flex;
+            align-items: flex-end;
+            background: rgba(30, 41, 59, 0.6);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            border-radius: 1.5rem;
+            padding: 0.75rem 1rem;
+            box-shadow: 0 10px 30px -5px rgba(0, 0, 0, 0.5);
+            transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+            pointer-events: auto;
+        }
+
+        .input-wrapper:focus-within {
+            border-color: rgba(96, 165, 250, 0.6);
+            background: rgba(30, 41, 59, 0.85);
+            box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.2), 0 15px 35px -5px rgba(0, 0, 0, 0.5);
+            transform: translateY(-2px);
+        }
+
+        textarea {
+            flex: 1;
+            background: transparent;
+            border: none;
+            color: var(--text);
+            font-family: inherit;
+            font-size: 1rem;
+            resize: none;
+            padding: 0.5rem 0;
+            max-height: 200px;
+            outline: none;
+            line-height: 1.5;
+        }
+
+        textarea::placeholder {
+            color: var(--text-muted);
+        }
+
+        button {
+            background: linear-gradient(135deg, var(--accent), #8b5cf6);
+            color: white;
+            border: none;
+            border-radius: 50%;
+            width: 42px;
+            height: 42px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+            margin-left: 0.75rem;
+            flex-shrink: 0;
+            box-shadow: 0 4px 10px rgba(59, 130, 246, 0.4);
+        }
+
+        button.stop {
+            background: linear-gradient(135deg, #ef4444, #b91c1c);
+            box-shadow: 0 4px 10px rgba(239, 68, 68, 0.4);
+        }
+
+        button:hover {
+            transform: scale(1.1) translateY(-2px);
+            box-shadow: 0 8px 20px rgba(139, 92, 246, 0.6);
+        }
+
+        button.stop:hover {
+            box-shadow: 0 8px 20px rgba(239, 68, 68, 0.6);
+        }
+
+        button:active {
+            transform: scale(0.95);
+        }
+
+        .thinking {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            color: var(--text-muted);
+            font-style: italic;
+        }
+
+        .dot {
+            width: 6px;
+            height: 6px;
+            background: var(--text-muted);
+            border-radius: 50%;
+            animation: bounce 1.4s infinite ease-in-out both;
+        }
+        .dot:nth-child(1) { animation-delay: -0.32s; }
+        .dot:nth-child(2) { animation-delay: -0.16s; }
+
+        @keyframes bounce {
+            0%, 80%, 100% { transform: scale(0); opacity: 0.3; }
+            40% { transform: scale(1); opacity: 1; }
+        }
+    </style>
+</head>
+<body>
+    <div id="header">
+        <h1>SipLLM Engine</h1>
+        <div id="stats">
+            <span id="speed-stat">Ready</span>
+            <span id="mem-stat">0 MB</span>
+        </div>
+    </div>
+
+    <div id="chat-container">
+        <div class="message system">
+            <div class="avatar">✓</div>
+            <div class="bubble">Welcome! I am fully compiled and running locally on your hardware. What would you like to chat about?</div>
+        </div>
+    </div>
+    
+    <div class="input-area">
+        <div class="input-wrapper">
+            <textarea id="prompt-input" placeholder="Message SipLLM..." rows="1"></textarea>
+            <button id="send-btn">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="22" y1="2" x2="11" y2="13"></line>
+                    <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                </svg>
+            </button>
+        </div>
+    </div>
+    
+    <script>
+        const chatContainer = document.getElementById('chat-container');
+        const input = document.getElementById('prompt-input');
+        const sendBtn = document.getElementById('send-btn');
+        const speedStat = document.getElementById('speed-stat');
+        const memStat = document.getElementById('mem-stat');
+
+        let isGenerating = false;
+        let currentAiMessageElement = null;
+        let evtSource = null;
+
+        const SEND_ICON = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>`;
+        const STOP_ICON = `<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><rect x="5" y="5" width="14" height="14" rx="2" ry="2"></rect></svg>`;
+
+        input.addEventListener('input', function() {
+            this.style.height = 'auto';
+            this.style.height = (this.scrollHeight) + 'px';
+        });
+
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                if (!isGenerating) {
+                    sendMessage();
+                }
+            }
+        });
+
+        sendBtn.addEventListener('click', () => {
+            if (isGenerating && evtSource) {
+                evtSource.close();
+                setGeneratingState(false);
+                speedStat.textContent = "Stopped by user";
+                if (currentAiMessageElement) {
+                    currentAiMessageElement.classList.remove('generating');
+                }
+            } else {
+                sendMessage();
+            }
+        });
+
+        function setGeneratingState(generating) {
+            isGenerating = generating;
+            if (generating) {
+                sendBtn.innerHTML = STOP_ICON;
+                sendBtn.classList.add('stop');
+            } else {
+                sendBtn.innerHTML = SEND_ICON;
+                sendBtn.classList.remove('stop');
+            }
+        }
+
+        function addMessage(role, text) {
+            const msgDiv = document.createElement('div');
+            msgDiv.className = `message ${role}`;
+            
+            let initialLabel = role === 'user' ? 'U' : 'AI';
+            if (role === 'system') initialLabel = 'S';
+
+            msgDiv.innerHTML = `
+                <div class="avatar">${initialLabel}</div>
+                <div class="bubble">${text}</div>
+            `;
+            chatContainer.appendChild(msgDiv);
+            scrollToBottom();
+            return msgDiv;
+        }
+
+        function scrollToBottom() {
+            chatContainer.scrollTo({
+                top: chatContainer.scrollHeight,
+                behavior: 'smooth'
+            });
+        }
+
+        function sendMessage() {
+            const text = input.value.trim();
+            if (!text || isGenerating) return;
+
+            input.value = '';
+            input.style.height = 'auto';
+            input.focus();
+
+            addMessage('user', text);
+
+            setGeneratingState(true);
+            speedStat.textContent = "Thinking...";
+
+            currentAiMessageElement = addMessage('ai', `
+                <div class="thinking">
+                    <div class="dot"></div>
+                    <div class="dot"></div>
+                    <div class="dot"></div>
+                </div>
+            `);
+            
+            currentAiMessageElement.classList.add('generating');
+            const aiBubble = currentAiMessageElement.querySelector('.bubble');
+
+            const formattedPrompt = `<|system|>\nYou are a highly intelligent and helpful AI assistant.</s>\n<|user|>\n${text}</s>\n<|assistant|>\n`;
+
+            const url = `/api/generate?prompt=${encodeURIComponent(formattedPrompt)}&n=1024&temp=0.7`;
+            evtSource = new EventSource(url);
+
+            let firstTokenReceived = false;
+
+            evtSource.addEventListener('token', (e) => {
+                if (!firstTokenReceived) {
+                    aiBubble.innerHTML = '';
+                    firstTokenReceived = true;
+                }
+                const data = JSON.parse(e.data);
+                aiBubble.textContent += data.piece; 
+                scrollToBottom();
+            });
+
+            evtSource.addEventListener('done', (e) => {
+                evtSource.close();
+                setGeneratingState(false);
+                currentAiMessageElement.classList.remove('generating');
+                
+                const stats = JSON.parse(e.data);
+                speedStat.textContent = `${stats.decode_tok_s.toFixed(1)} tok/s`;
+                memStat.textContent = `${stats.peak_rss_mb.toFixed(1)} MB RAM`;
+
+                if (!firstTokenReceived) {
+                     aiBubble.innerHTML = "<em>(No output generated)</em>";
+                }
+            });
+
+            evtSource.onerror = (err) => {
+                evtSource.close();
+                setGeneratingState(false);
+                speedStat.textContent = "Error";
+                currentAiMessageElement.classList.remove('generating');
+                if (!firstTokenReceived) {
+                     aiBubble.innerHTML = "<em style='color:#ef4444'>Connection error. The server might have crashed.</em>";
+                }
+            };
+        }
+
+        fetch('/api/model')
+            .then(res => res.json())
+            .then(data => {
+                if (data.ok) {
+                    speedStat.textContent = `Model: ${data.model.split('/').pop()}`;
+                }
+            })
+            .catch(e => console.error("Could not fetch model info", e));
+
+    </script>
+</body>
+</html>
