@@ -7,86 +7,7 @@
 
 namespace llm {
 
-const char* norm_kind_name(NormKind k) {
-    switch (k) {
-        case NormKind::RMSNorm:      return "rmsnorm";
-        case NormKind::RMSNormGemma: return "rmsnorm_gemma";
-        case NormKind::LayerNorm:    return "layernorm";
-    }
-    return "?";
-}
-const char* ffn_kind_name(FfnKind k) {
-    switch (k) {
-        case FfnKind::SwiGLU:  return "swiglu";
-        case FfnKind::GeGLU:   return "geglu";
-        case FfnKind::GeluMLP: return "gelu_mlp";
-    }
-    return "?";
-}
-const char* rope_kind_name(RopeKind k) {
-    switch (k) {
-        case RopeKind::None:         return "none";
-        case RopeKind::Full:         return "full";
-        case RopeKind::Partial:      return "partial";
-        case RopeKind::Llama3Scaled: return "llama3_scaled";
-    }
-    return "?";
-}
 
-// Derive a block's declarative plan from the resolved config. This is exactly
-// the dispatch logic in Transformer::block()/block_* expressed as data — kept in
-// lockstep with it so the IR is a faithful description of what executes.
-static SipBlockPlan derive_block_plan(const ModelConfig& c, const WeightSource& src) {
-    SipBlockPlan p;
-
-    // Normalization kind.
-    if (c.use_layernorm)      p.norm = NormKind::LayerNorm;
-    else if (c.gemma_rmsnorm) p.norm = NormKind::RMSNormGemma;
-    else                      p.norm = NormKind::RMSNorm;
-
-    // QKV projection shape.
-    p.qkv_fused = c.fused_qkv;
-    p.qkv_bias  = (src.find(names::blk(0, "attn_q.bias")) != nullptr);   // Qwen2
-
-    // Gemma 3 per-head q/k norm.
-    p.qk_norm = (src.find(names::blk(0, "attn_q_norm.weight")) != nullptr);
-
-    // RoPE mode.
-    const int64_t hd = c.head_dim;
-    if (c.arch_kind == Arch::GPT2) {
-        p.rope = RopeKind::None;
-    } else if (c.use_llama3_rope()) {
-        p.rope = RopeKind::Llama3Scaled;
-    } else if (c.rope_dim > 0 && c.rope_dim < hd) {
-        p.rope = RopeKind::Partial;
-        p.rope_dim = c.rope_dim;
-    } else {
-        p.rope = RopeKind::Full;
-    }
-    p.rope_dual_base = (c.rope_theta_local > 0.f && c.sliding_window_pattern > 0);
-
-    // Attention soft-cap + Gemma pre/post norms.
-    p.attn_softcap   = (c.attn_logit_softcap > 0.f);
-    p.post_attn_norm = (src.find(names::blk(0, "post_attention_norm.weight")) != nullptr);
-    p.post_ffn_norm  = (src.find(names::blk(0, "post_ffw_norm.weight")) != nullptr);
-
-    // FFN structure.
-    if (c.ffn_gelu)             p.ffn = FfnKind::GeluMLP;   // GPT-2 / Phi-2, non-gated
-    else if (c.gemma_rmsnorm)   p.ffn = FfnKind::GeGLU;     // Gemma, gated GELU
-    else                        p.ffn = FfnKind::SwiGLU;    // Llama family
-    p.ffn_fused_gate_up = c.fused_gate_up;
-
-    // Residual topology + projection biases.
-    p.parallel_residual = c.parallel_residual;
-    p.proj_bias = (src.find(names::blk(0, "attn_output.bias")) != nullptr) ||
-                  (src.find(names::blk(0, "attn_qkv.bias")) != nullptr);
-
-    // Mixture-of-experts.
-    p.moe = c.is_moe();
-    p.n_experts = c.n_experts;
-    p.n_experts_used = c.n_experts_used;
-    return p;
-}
 
 static void add_tensor(std::vector<SipTensor>& out, const WeightSource& src,
                        Role role, const std::string& name) {
@@ -122,7 +43,7 @@ SipModel import_model(const WeightSource& src) {
     m.final_logit_softcap = m.config.final_logit_softcap;
     m.total_tensors = (int64_t)src.tensors().size();
 
-    m.block = derive_block_plan(m.config, src);
+    m.block = m.config.block_spec;
     m.final_norm = m.block.norm;
 
     // Per-role tensor schema for layer 0 (the stack is homogeneous). Present

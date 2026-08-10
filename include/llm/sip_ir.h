@@ -37,55 +37,7 @@ namespace llm {
 // pin against this; importers stamp it into every model they emit.
 constexpr int kSipIRVersion = 1;
 
-// Normalization applied at a block's sublayer inputs and the final norm.
-enum class NormKind {
-    RMSNorm,        // x / rms(x) * w                       (Llama, Mistral, Qwen2, Phi3)
-    RMSNormGemma,   // x / rms(x) * (1 + w)                 (Gemma 2 / 3)
-    LayerNorm,      // (x - mean) / std * w + b             (GPT-2, Phi-2)
-};
 
-// Feed-forward network structure.
-enum class FfnKind {
-    SwiGLU,   // down(silu(gate(x)) * up(x))                (Llama family)
-    GeGLU,    // down(gelu(gate(x)) * up(x))                (Gemma)
-    GeluMLP,  // down(gelu(up(x)))  — non-gated             (GPT-2, Phi-2)
-};
-
-// Rotary position embedding mode.
-enum class RopeKind {
-    None,          // no RoPE; positions come from a learned table (GPT-2)
-    Full,          // rotate all head_dim dims
-    Partial,       // rotate only the first rope_dim dims/head (Phi-2/3)
-    Llama3Scaled,  // Full + per-wavelength frequency stretch (Llama 3.x)
-};
-
-const char* norm_kind_name(NormKind);
-const char* ffn_kind_name(FfnKind);
-const char* rope_kind_name(RopeKind);
-
-// Declarative recipe for one transformer block. This is the single source of
-// truth for what a block does; the executor's dispatch is a pure function of
-// these fields. Deriving it from the architecture (below) replaces the scattered
-// `if (arch_kind == ...)` checks with data (#44).
-struct SipBlockPlan {
-    NormKind norm = NormKind::RMSNorm;   // attn/ffn input norm
-    bool     qkv_fused = false;          // one attn_qkv tensor split into q,k,v (Phi)
-    bool     qkv_bias  = false;          // separate q/k/v projection biases (Qwen2)
-    bool     qk_norm   = false;          // per-head q/k norm before RoPE (Gemma3)
-    RopeKind rope = RopeKind::Full;
-    int64_t  rope_dim = 0;               // rotary dims/head when rope == Partial
-    bool     rope_dual_base = false;     // separate local/global RoPE base (Gemma3)
-    bool     attn_softcap = false;       // cap attention logits before softmax (Gemma2)
-    bool     post_attn_norm = false;     // norm the attn output before the residual (Gemma2)
-    FfnKind  ffn = FfnKind::SwiGLU;
-    bool     ffn_fused_gate_up = false;  // ffn_up packs [gate; up] (Phi3)
-    bool     post_ffn_norm = false;      // norm the ffn output before the residual (Gemma2)
-    bool     parallel_residual = false;  // attn & ffn read one shared norm, both added (Phi2)
-    bool     proj_bias = false;          // attn_output / ffn projections are biased (GPT-2, Phi-2)
-    bool     moe = false;                // router + top-k expert FFNs (Mixtral)
-    int64_t  n_experts = 0;              // total experts (MoE)
-    int64_t  n_experts_used = 0;         // experts per token (MoE)
-};
 
 // One per-role tensor the model contains, resolved against the source.
 struct SipTensor {
@@ -111,7 +63,7 @@ struct SipModel {
     std::string  source_format;   // which importer produced this ("gguf" | "llmw")
 
     ModelConfig  config;          // resolved hyperparameters (the executor's view)
-    SipBlockPlan block;           // declarative per-block recipe
+    BlockSpec    block;           // declarative per-block recipe
     NormKind     final_norm = NormKind::RMSNorm;
     bool         tied_embeddings = false;
     bool         learned_pos_emb = false;
