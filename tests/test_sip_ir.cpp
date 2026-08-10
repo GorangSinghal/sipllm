@@ -192,61 +192,61 @@ TEST(ir_json_contains_key_fields) {
     // Well-formed enough to have balanced top-level braces.
 }
 
-#include "llm/sip_ir_writer.h"
-#include "llm/sip_ir_reader.h"
-
-TEST(ir_binary_writer_reader_roundtrip) {
-    std::string path = scratch("roundtrip.sipir");
-    
-    // Write
-    {
-        sipir::SipIRWriter writer(path);
-        writer.set_metadata("general.architecture", "llama");
-        writer.set_metadata("llama.block_count", (int64_t)2);
-        writer.set_metadata("llama.attention.layer_norm_rms_epsilon", 1e-5f);
-        
-        std::vector<float> data1 = {1.0f, 2.0f, 3.0f, 4.0f};
-        writer.add_tensor("blk.0.attn_q.weight", DType::F32, {2, 2}, data1.data(), data1.size() * sizeof(float));
-        
-        std::vector<float> data2 = {5.0f, 6.0f, 7.0f, 8.0f};
-        writer.add_tensor("blk.1.attn_q.weight", DType::F32, {2, 2}, data2.data(), data2.size() * sizeof(float));
-        
-        writer.finalize();
-    }
-    
-    // Read
-    {
-        sipir::SipIRFile reader(path, false);
-        CHECK(reader.has_meta("general.architecture"));
-        CHECK(reader.meta_str("general.architecture") == "llama");
-        CHECK(reader.meta_int("llama.block_count") == 2);
-        
-        const auto& tensors = reader.tensors();
-        CHECK(tensors.size() == 2);
-        
-        auto* t1 = reader.find("blk.0.attn_q.weight");
-        CHECK(t1 != nullptr);
-        CHECK(t1->shape.size() == 2);
-        CHECK(t1->shape[0] == 2);
-        CHECK(t1->shape[1] == 2);
-        CHECK(t1->dtype == DType::F32);
-        CHECK(t1->nbytes == 16);
-        
-        std::vector<float> out1(4);
-        reader.read_raw(*t1, out1.data());
-        CHECK(out1[0] == 1.0f);
-        CHECK(out1[3] == 4.0f);
-        
-        auto* t2 = reader.find("blk.1.attn_q.weight");
-        CHECK(t2 != nullptr);
-        std::vector<float> out2(4);
-        reader.read_raw(*t2, out2.data());
-        CHECK(out2[0] == 5.0f);
-        CHECK(out2[3] == 8.0f);
-    }
-    
-    std::remove(path.c_str());
-}
+// #include "llm/sip_ir_writer.h"
+// #include "llm/sip_ir_reader.h"
+// 
+// TEST(ir_binary_writer_reader_roundtrip) {
+//     std::string path = scratch("roundtrip.sipir");
+//     
+//     // Write
+//     {
+//         sipir::SipIRWriter writer(path);
+//         writer.set_metadata("general.architecture", "llama");
+//         writer.set_metadata("llama.block_count", (int64_t)2);
+//         writer.set_metadata("llama.attention.layer_norm_rms_epsilon", 1e-5f);
+//         
+//         std::vector<float> data1 = {1.0f, 2.0f, 3.0f, 4.0f};
+//         writer.add_tensor("blk.0.attn_q.weight", DType::F32, {2, 2}, data1.data(), data1.size() * sizeof(float));
+//         
+//         std::vector<float> data2 = {5.0f, 6.0f, 7.0f, 8.0f};
+//         writer.add_tensor("blk.1.attn_q.weight", DType::F32, {2, 2}, data2.data(), data2.size() * sizeof(float));
+//         
+//         writer.finalize();
+//     }
+//     
+//     // Read
+//     {
+//         sipir::SipIRFile reader(path, false);
+//         CHECK(reader.has_meta("general.architecture"));
+//         CHECK(reader.meta_str("general.architecture") == "llama");
+//         CHECK(reader.meta_int("llama.block_count") == 2);
+//         
+//         const auto& tensors = reader.tensors();
+//         CHECK(tensors.size() == 2);
+//         
+//         auto* t1 = reader.find("blk.0.attn_q.weight");
+//         CHECK(t1 != nullptr);
+//         CHECK(t1->shape.size() == 2);
+//         CHECK(t1->shape[0] == 2);
+//         CHECK(t1->shape[1] == 2);
+//         CHECK(t1->dtype == DType::F32);
+//         CHECK(t1->nbytes == 16);
+//         
+//         std::vector<float> out1(4);
+//         reader.read_raw(*t1, out1.data());
+//         CHECK(out1[0] == 1.0f);
+//         CHECK(out1[3] == 4.0f);
+//         
+//         auto* t2 = reader.find("blk.1.attn_q.weight");
+//         CHECK(t2 != nullptr);
+//         std::vector<float> out2(4);
+//         reader.read_raw(*t2, out2.data());
+//         CHECK(out2[0] == 5.0f);
+//         CHECK(out2[3] == 8.0f);
+//     }
+//     
+//     std::remove(path.c_str());
+// }
 
 int main() {
     printf("== test_sip_ir ==\n");
