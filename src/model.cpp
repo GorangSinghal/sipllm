@@ -171,7 +171,8 @@ ModelConfig ModelConfig::from_source(const WeightSource& src) {
     if (first_float(src, {K("attention.layer_norm_epsilon")}, f)) c.layernorm_eps = (float)f;
 
     // Sniff tensors for biases and specific norms.
-    c.block_spec.qkv_bias  = (src.find(names::blk(0, "attn_q.bias")) != nullptr);
+    c.block_spec.qkv_bias  = (src.find(names::blk(0, "attn_q.bias")) != nullptr) ||
+                             (src.find(names::blk(0, "attn_qkv.bias")) != nullptr);
     c.block_spec.qk_norm   = (src.find(names::blk(0, "attn_q_norm.weight")) != nullptr);
     c.block_spec.post_attn_norm = (src.find(names::blk(0, "post_attention_norm.weight")) != nullptr);
     c.block_spec.post_ffn_norm  = (src.find(names::blk(0, "post_ffw_norm.weight")) != nullptr);
