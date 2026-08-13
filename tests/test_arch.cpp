@@ -314,6 +314,8 @@ TEST(gpt2_config_discovery) {
     CHECK(cfg.arch_kind == Arch::GPT2 && cfg.block_spec.norm == NormKind::LayerNorm && cfg.learned_pos_emb);
     CHECK(g.find("position_embd.weight") != nullptr);
     CHECK(g.find("blk.0.attn_qkv.weight") != nullptr);
+    CHECK(g.find("blk.0.attn_qkv.bias") != nullptr);
+    CHECK(cfg.block_spec.qkv_bias);
     CHECK(g.find("blk.0.attn_norm.bias") != nullptr);
     CHECK(g.find("blk.0.ffn_gate.weight") == nullptr);   // non-gated MLP
 }
@@ -340,6 +342,8 @@ TEST(phi2_forward_finite_and_deterministic) {
     GgufFile g(p);
     ModelConfig cfg = ModelConfig::from_source(g);
     CHECK(cfg.arch_kind == Arch::Phi2 && cfg.block_spec.norm == NormKind::LayerNorm && cfg.block_spec.parallel_residual);
+    CHECK(g.find("blk.0.attn_qkv.bias") != nullptr);
+    CHECK(cfg.block_spec.qkv_bias);
     std::vector<int64_t> toks = {5, 2, 9, 1, 7};
     auto a = forward_gguf(p, toks), b = forward_gguf(p, toks);
     CHECK(a == b);

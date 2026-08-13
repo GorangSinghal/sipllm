@@ -9,7 +9,7 @@
 // A `SipModel` is three things, all resolved from a `WeightSource`:
 //   1. config      — the hyperparameters the executor already used (ModelConfig).
 //   2. block plan  — a DECLARATIVE recipe for one transformer block (the
-//                    data-driven form of Transformer::block_* — see #44). Every
+//                    data-driven form of Transformer::block — see #44). Every
 //                    per-architecture quirk (norm kind, fused/biased QKV, RoPE
 //                    mode, soft-cap, GeGLU vs SwiGLU, pre/post norms, parallel
 //                    residual, MoE) is a field, not a hand-written function.
@@ -36,8 +36,6 @@ namespace llm {
 // Bumped only on an incompatible change to the SipModel shape below. Consumers
 // pin against this; importers stamp it into every model they emit.
 constexpr int kSipIRVersion = 1;
-
-
 
 // One per-role tensor the model contains, resolved against the source.
 struct SipTensor {

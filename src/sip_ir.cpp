@@ -7,8 +7,6 @@
 
 namespace llm {
 
-
-
 static void add_tensor(std::vector<SipTensor>& out, const WeightSource& src,
                        Role role, const std::string& name) {
     SipTensor t;
@@ -44,6 +42,7 @@ SipModel import_model(const WeightSource& src) {
     m.total_tensors = (int64_t)src.tensors().size();
 
     m.block = m.config.block_spec;
+    if (m.block.rope != RopeKind::Partial) m.block.rope_dim = 0;
     m.final_norm = m.block.norm;
 
     // Per-role tensor schema for layer 0 (the stack is homogeneous). Present

@@ -127,7 +127,6 @@ void Transformer::block(int64_t layer, int64_t pos) {
 
     // --- 1. Pre-Attention Norm ---
     WeightRef an = loader_->getWeight(Role::AttnNorm);
-    // User Request: Use jump-table optimization for Enum choices.
     switch (b.norm) {
         case NormKind::LayerNorm:
             layernorm(xb_.data(), x_.data(), static_cast<const float*>(an.data),
@@ -137,7 +136,6 @@ void Transformer::block(int64_t layer, int64_t pos) {
             rmsnorm_gemma(xb_.data(), x_.data(), static_cast<const float*>(an.data), dim, cfg_.rms_eps);
             break;
         case NormKind::RMSNorm:
-        default:
             rmsnorm(xb_.data(), x_.data(), static_cast<const float*>(an.data), dim, cfg_.rms_eps);
             break;
     }
@@ -145,7 +143,7 @@ void Transformer::block(int64_t layer, int64_t pos) {
     // --- 2. QKV Projection ---
     if (b.qkv_fused) {
         linear(fused_.data(), loader_->getWeight(Role::AttnQKV), xb_.data(), pool_);
-        if (b.qkv_bias) add_bias(fused_.data(), loader_->getWeight(Role::AttnQKVBias), q_dim + 2 * kv_dim);
+        add_bias(fused_.data(), loader_->getWeight(Role::AttnQKVBias), q_dim + 2 * kv_dim);
         std::memcpy(q_.data(), fused_.data(),                  q_dim * sizeof(float));
         std::memcpy(k_.data(), fused_.data() + q_dim,          kv_dim * sizeof(float));
         std::memcpy(v_.data(), fused_.data() + q_dim + kv_dim, kv_dim * sizeof(float));
@@ -153,11 +151,9 @@ void Transformer::block(int64_t layer, int64_t pos) {
         linear(q_.data(), loader_->getWeight(Role::AttnQ), xb_.data(), pool_);
         linear(k_.data(), loader_->getWeight(Role::AttnK), xb_.data(), pool_);
         linear(v_.data(), loader_->getWeight(Role::AttnV), xb_.data(), pool_);
-        if (b.qkv_bias) {
-            add_bias(q_.data(), loader_->getWeight(Role::AttnQBias), q_dim);
-            add_bias(k_.data(), loader_->getWeight(Role::AttnKBias), kv_dim);
-            add_bias(v_.data(), loader_->getWeight(Role::AttnVBias), kv_dim);
-        }
+        add_bias(q_.data(), loader_->getWeight(Role::AttnQBias), q_dim);
+        add_bias(k_.data(), loader_->getWeight(Role::AttnKBias), kv_dim);
+        add_bias(v_.data(), loader_->getWeight(Role::AttnVBias), kv_dim);
     }
 
     // --- 3. Q/K Norm ---
@@ -178,7 +174,6 @@ void Transformer::block(int64_t layer, int64_t pos) {
         if (b.rope_dual_base && ((layer + 1) % cfg_.sliding_window_pattern) != 0)
             theta = cfg_.rope_theta_local;
             
-        // User Request: Use jump-table optimization for Enum choices.
         switch (b.rope) {
             case RopeKind::Partial:
                 rope_rot(q_.data(), n_heads, hd, b.rope_dim > 0 ? b.rope_dim : hd, pos, theta);
@@ -196,11 +191,8 @@ void Transformer::block(int64_t layer, int64_t pos) {
                 break;
             }
             case RopeKind::Full:
-            default:
                 apply_rope(q_.data(), n_heads, hd, pos, theta);
                 apply_rope(k_.data(), n_kv,    hd, pos, theta);
-                break;
-            case RopeKind::None:
                 break;
         }
     }
@@ -229,7 +221,7 @@ void Transformer::block(int64_t layer, int64_t pos) {
 
     // --- 7. Attention Out Projection ---
     linear(proj_.data(), loader_->getWeight(Role::AttnOut), attn_out_.data(), pool_);
-    if (b.proj_bias) add_bias(proj_.data(), loader_->getWeight(Role::AttnOutBias), dim);
+    add_bias(proj_.data(), loader_->getWeight(Role::AttnOutBias), dim);
     if (b.post_attn_norm) {
         WeightRef apn = loader_->getWeight(Role::AttnPostNorm);
         if (apn.valid()) rmsnorm_gemma(proj_.data(), proj_.data(), static_cast<const float*>(apn.data), dim, cfg_.rms_eps);
@@ -239,7 +231,6 @@ void Transformer::block(int64_t layer, int64_t pos) {
     // --- 8. FFN Pre-Norm ---
     if (!b.parallel_residual) {
         WeightRef fn = loader_->getWeight(Role::FfnNorm);
-        // User Request: Use jump-table optimization for Enum choices.
         switch (b.norm) {
             case NormKind::LayerNorm:
                 layernorm(xb_.data(), x_.data(), static_cast<const float*>(fn.data),
@@ -249,7 +240,6 @@ void Transformer::block(int64_t layer, int64_t pos) {
                 rmsnorm_gemma(xb_.data(), x_.data(), static_cast<const float*>(fn.data), dim, cfg_.rms_eps);
                 break;
             case NormKind::RMSNorm:
-            default:
                 rmsnorm(xb_.data(), x_.data(), static_cast<const float*>(fn.data), dim, cfg_.rms_eps);
                 break;
         }
@@ -269,7 +259,7 @@ void Transformer::block(int64_t layer, int64_t pos) {
         std::vector<int> ord(ne);
         for (int64_t e = 0; e < ne; ++e) ord[e] = (int)e;
         std::partial_sort(ord.begin(), ord.begin() + k, ord.end(),
-                          [&](int a, int b) { return router_[a] > router_[b]; });
+                          [&](int lhs, int rhs) { return router_[lhs] > router_[rhs]; });
         float wsum = 0.f;
         for (int64_t i = 0; i < k; ++i) wsum += router_[ord[i]];
         const float winv = wsum > 0.f ? 1.0f / wsum : 0.f;
@@ -297,20 +287,20 @@ void Transformer::block(int64_t layer, int64_t pos) {
             linear(proj_.data(), ed, hb_.data(), pool_);
             axpy_f32(moe_.data(), proj_.data(), w, dim);
         }
-        std::memcpy(ffn_out, moe_.data(), dim * sizeof(float)); // copy result to output
+        if (ffn_out != moe_.data()) {
+            std::memcpy(ffn_out, moe_.data(), dim * sizeof(float)); // copy result to output
+        }
     } else {
         const int64_t ff = cfg_.ffn_dim;
-        // User Request: Use jump-table optimization for Enum choices.
         switch (b.ffn) {
             case FfnKind::GeluMLP:
                 linear(hb_.data(), loader_->getWeight(Role::FfnUp), xb_.data(), pool_);
-                if (b.proj_bias) add_bias(hb_.data(), loader_->getWeight(Role::FfnUpBias), ff);
+                add_bias(hb_.data(), loader_->getWeight(Role::FfnUpBias), ff);
                 gelu_inplace(hb_.data(), ff);
                 linear(ffn_out, loader_->getWeight(Role::FfnDown), hb_.data(), pool_);
                 break;
             case FfnKind::GeGLU:
             case FfnKind::SwiGLU:
-            default:
                 if (b.ffn_fused_gate_up) {
                     linear(fused_.data(), loader_->getWeight(Role::FfnUp), xb_.data(), pool_);
                     float* gate = fused_.data();
