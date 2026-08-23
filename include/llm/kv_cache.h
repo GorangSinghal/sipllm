@@ -76,6 +76,21 @@ public:
         return v_.data() + offset(layer, pos);
     }
 
+    const float* base_k() const { return k_.data(); }
+    const float* base_v() const { return v_.data(); }
+
+    void inject(int64_t match_len, const float* src_k, const float* src_v) {
+        set_seq_len(match_len);
+        for (int64_t l = 0; l < n_layers_; ++l) {
+            std::memcpy(k_.data() + l * cap_ * kv_dim_,
+                        src_k + l * match_len * kv_dim_,
+                        match_len * kv_dim_ * sizeof(float));
+            std::memcpy(v_.data() + l * cap_ * kv_dim_,
+                        src_v + l * match_len * kv_dim_,
+                        match_len * kv_dim_ * sizeof(float));
+        }
+    }
+
     size_t bytes() const { return (k_.size() + v_.size()) * sizeof(float); }
 
 private:

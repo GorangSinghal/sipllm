@@ -5,6 +5,7 @@
 #include "llm/common.h"
 #include "llm/neon.h"
 #include "llm/mem_plan.h"
+#include "llm/kosh.h"
 
 #include <algorithm>
 
@@ -80,23 +81,48 @@ std::string Runtime::generate(const std::string& prompt, int max_new,
     bool fresh = (pos_ == 0);
     std::vector<int64_t> prompt_ids = tok_.encode(prompt, /*add_bos=*/fresh);
     st.prompt_tokens = (int)prompt_ids.size();
+    
+    std::vector<int64_t> full_session_tokens = prompt_ids;
+
+    // ---- Phase 3: Kosh Context Caching ----
+    std::vector<int64_t> prefill_ids = prompt_ids;
+    if (kosh_ && fresh && prompt_ids.size() > 1) {
+        std::vector<float> cached_k, cached_v;
+        int64_t hit_len = kosh_->find_longest_prefix(prompt_ids, cached_k, cached_v);
+        
+        // Edge case: If Kosh matches the entire prompt, dial it back by 1 token.
+        // We must run at least the final token through the engine to get the logits 
+        // to start decoding the answer.
+        if (hit_len == (int64_t)prompt_ids.size()) {
+            hit_len--;
+        }
+        
+        if (hit_len > 0) {
+            kv_->inject(hit_len, cached_k.data(), cached_v.data());
+            pos_ = hit_len;
+            st.kosh_hit_tokens = (int)hit_len;
+            
+            prefill_ids = std::vector<int64_t>(prompt_ids.begin() + hit_len, prompt_ids.end());
+            
+            for (int64_t i = 0; i < hit_len; ++i) {
+                sampler.accept(prompt_ids[i]);
+            }
+        }
+    }
 
     std::string output;
     const int64_t vocab = cfg_.vocab_size;
 
     // ---- prefill (RFC-007: single-pass batched) ----
-    // One batched sweep streams the whole model ONCE for the entire prompt,
-    // instead of the old loop that called tf_->forward() per token — which
-    // re-streamed every layer for every prompt token (P full-model streams).
     double t_start = now_sec();
     int64_t next = -1;
-    if (!prompt_ids.empty()) {
-        LLM_CHECK(pos_ + (int64_t)prompt_ids.size() - 1 < kv_->max_ctx(),
+    if (!prefill_ids.empty()) {
+        LLM_CHECK(pos_ + (int64_t)prefill_ids.size() - 1 < kv_->max_ctx(),
                   "context window exceeded during prefill");
-        const float* logits = tf_->prefill(prompt_ids.data(),
-                                            (int64_t)prompt_ids.size(), pos_);
-        pos_ += (int64_t)prompt_ids.size();
-        for (int64_t id : prompt_ids) sampler.accept(id);  // seed repetition history
+        const float* logits = tf_->prefill(prefill_ids.data(),
+                                            (int64_t)prefill_ids.size(), pos_);
+        pos_ += (int64_t)prefill_ids.size();
+        for (int64_t id : prefill_ids) sampler.accept(id);  // seed repetition history
         first_logits_.assign(logits, logits + vocab);
         next = sampler.sample(logits, vocab);
     }
@@ -115,6 +141,7 @@ std::string Runtime::generate(const std::string& prompt, int max_new,
 
         std::string piece = tok_.decode_token(next);
         output += piece;
+        full_session_tokens.push_back(next);
         ++st.gen_tokens;
         if (on_token && !on_token(piece, next)) break;
 
@@ -124,6 +151,11 @@ std::string Runtime::generate(const std::string& prompt, int max_new,
         next = sampler.sample(logits, vocab);
     }
     if (profile_sink_) tf_->enable_profiling(false);
+    
+    // ---- Phase 3: Kosh Commit ----
+    if (kosh_) {
+        kosh_->commit(full_session_tokens, kv_->base_k(), kv_->base_v(), kv_->capacity());
+    }
     double t_end = now_sec();
     st.decode_s = t_end - t_decode_start;
     st.decode_tok_s = st.decode_s > 0 ? st.gen_tokens / st.decode_s : 0;

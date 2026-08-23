@@ -6,6 +6,7 @@
 //
 // Streams tokens to stdout as they are produced and prints a stats block.
 #include "llm/runtime.h"
+#include "llm/kosh.h"
 #include "llm/device_profile.h"
 #include "llm/auto_tuner.h"
 
@@ -43,7 +44,7 @@ int main(int argc, char** argv) {
             "          [--top-k K] [--top-p P] [--repeat-penalty R] [--repeat-last-n N]\n"
             "          [--residency fp32|quant] [--mmap] [--no-async] [--stream-lm-head]\n"
             "          [--buffers N] [--ctx N] [--threads N] [--seed S] [--greedy] [--schedule P]\n"
-            "          [--ram-budget BYTES|N{K,M,G}] [--fast]\n",
+            "          [--ram-budget BYTES|N{K,M,G}] [--kosh-budget BYTES|N{K,M,G}] [--fast]\n",
             argv[0]);
         return 2;
     }
@@ -51,6 +52,7 @@ int main(int argc, char** argv) {
     std::string prompt = "Hello";
     int max_new = 64, threads = 0, buffers = 2, ctx = 0;
     size_t ram_budget = 0;   // #37: total peak-RSS target (0 = unlimited)
+    size_t kosh_budget = 0;  // Phase 3: Semantic Cache budget (0 = disabled)
     bool force_budget = false;
     AutoTunerOptions tuner_opt;
     bool schedule_overridden = false;
@@ -79,6 +81,7 @@ int main(int argc, char** argv) {
         else if (a == "--stream-lm-head") opt.stream_lm_head = true;
         else if (a == "--buffers") buffers = std::stoi(next("2"));
         else if (a == "--ram-budget") ram_budget = parse_bytes(next("0"));
+        else if (a == "--kosh-budget") kosh_budget = parse_bytes(next("0"));
         else if (a == "--ram-budget-force") force_budget = true;
         else if (a == "--fast") opt.fast_quant = true;
         else if (a == "--ctx") ctx = std::stoi(next("0"));
@@ -123,6 +126,13 @@ int main(int argc, char** argv) {
         
         auto src = open_model(model, opt.use_mmap);
         Runtime rt(std::move(src), opt, ctx, threads, ram_budget, force_budget);
+        
+        std::unique_ptr<KoshCache> kosh = nullptr;
+        if (kosh_budget > 0) {
+            kosh = std::make_unique<KoshCache>(kosh_budget, rt.config().n_layers, rt.config().kv_dim());
+            rt.set_kosh(kosh.get());
+        }
+        
         if (rt.thread_pool()) rt.thread_pool()->set_policy(schedule_policy);
         double load_s = now_sec() - t0;
 
@@ -157,6 +167,7 @@ int main(int argc, char** argv) {
             "TTFT:            %.3f s\n"
             "prompt tokens:   %d\n"
             "generated:       %d\n"
+            "kosh hit tokens: %d\n"
             "weights resident:%.1f MB\n"
             "kv cache:        %.1f MB\n"
             "streamed:        %.1f MB (from disk)\n"
@@ -170,7 +181,7 @@ int main(int argc, char** argv) {
             st.pinned_layers, (int)rt.config().n_layers, budget_note,
             opt.fast_quant ? "on" : "off",
             st.decode_tok_s, st.prefill_tok_s, st.ttft_s,
-            st.prompt_tokens, st.gen_tokens,
+            st.prompt_tokens, st.gen_tokens, st.kosh_hit_tokens,
             st.weights_resident_bytes / 1e6, st.kv_bytes / 1e6,
             st.bytes_read / 1e6, st.prefetch_hits, st.prefetch_misses,
             st.ctx_used, st.ctx_max,

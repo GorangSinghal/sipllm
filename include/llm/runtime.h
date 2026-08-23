@@ -19,6 +19,8 @@
 
 namespace llm {
 
+class KoshCache;
+
 // Open a model file by content sniffing (GGUF or .llmw). Returns a WeightSource.
 std::unique_ptr<WeightSource> open_model(const std::string& path, bool use_mmap = false);
 
@@ -39,6 +41,7 @@ struct GenStats {
     uint64_t prefetch_misses = 0;
     int    ctx_used = 0;
     int    ctx_max = 0;
+    int    kosh_hit_tokens = 0; // Phase 3: Kosh instrumentation
 };
 
 class Runtime {
@@ -82,6 +85,9 @@ public:
     // Reset conversation state (KV cache).
     void reset() { kv_->clear(); pos_ = 0; }
 
+    // Phase 3: Attach the Context Cache (Kosh)
+    void set_kosh(KoshCache* kosh) { kosh_ = kosh; }
+
 private:
     std::unique_ptr<WeightSource> src_;
     ModelConfig cfg_;
@@ -94,6 +100,7 @@ private:
     int64_t pos_ = 0;   // absolute position in the KV cache
     ProfileSink profile_sink_;
     std::vector<float> first_logits_;   // logits at first prediction (golden)
+    KoshCache* kosh_ = nullptr;
 };
 
 } // namespace llm
